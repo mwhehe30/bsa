@@ -1,0 +1,194 @@
+/* Mobile Layout Fixes for Admin Panel */
+
+/* Fix content area on mobile */
+@media (max-width: 991.98px) {
+    .content {
+        padding: 0 0.5rem 0 0.5rem !important;
+        margin-left: 0 !important;
+        overflow-x: hidden;
+    }
+
+    /* Fix container fluid overflow */
+    .container-fluid {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+
+    /* Fix card padding on mobile */
+    .card-body {
+        padding: 1rem 0.75rem;
+    }
+
+    /* Fix table responsive container */
+    .table-responsive {
+        margin-left: -0.75rem;
+        margin-right: -0.75rem;
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Fix input groups on mobile */
+    .input-group {
+        flex-wrap: nowrap;
+    }
+
+    /* Fix button groups */
+    .d-flex.gap-2 {
+        flex-wrap: wrap;
+    }
+
+    /* Make badges wrap nicely */
+    .badge {
+        white-space: normal;
+        line-height: 1.4;
+    }
+
+    /* Fix navbar on mobile */
+    .navbar {
+        padding: 0.5rem 1rem;
+    }
+
+    /* Fix sidebar on mobile */
+    .sidebar {
+        z-index: 1050;
+    }
+
+    /* Fix pagination on mobile - handled by component */
+    .pagination {
+        margin-bottom: 0;
+    }
+
+    /* Fix dropdown menus on mobile */
+    .dropdown-menu {
+        max-width: calc(100vw - 2rem);
+    }
+
+    /* Fix alert on mobile */
+    .alert {
+        word-break: break-word;
+    }
+
+    /* Fix form on mobile */
+    .form-control,
+    .form-select {
+        font-size: 1rem; /* Prevent zoom on iOS */
+    }
+
+    /* Fix buttons on small screens */
+    .btn {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Better table display on mobile */
+    table {
+        font-size: 0.875rem;
+    }
+
+    table th,
+    table td {
+        padding: 0.5rem 0.25rem;
+    }
+
+    /* Fix action column buttons */
+    .btn-sm {
+        padding: 0.25rem 0.4rem;
+        font-size: 0.75rem;
+    }
+}
+
+/* Tablet fixes */
+@media (min-width: 768px) and (max-width: 991.98px) {
+    .content {
+        padding: 0 1rem 0 1rem !important;
+    }
+
+    .container-fluid {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+}
+
+/* Extra small devices */
+@media (max-width: 575.98px) {
+    /* Stack action buttons vertically only if explicitly marked */
+    .d-flex.gap-2.flex-mobile-column {
+        flex-direction: column;
+        gap: 0.5rem !important;
+    }
+
+    .d-flex.gap-2.flex-mobile-column .btn {
+        width: 100%;
+    }
+
+    /* Fix search and filter controls */
+    .col-12.mb-2 {
+        margin-bottom: 0.75rem !important;
+    }
+
+    /* Better spacing for mobile */
+    .mt-5 {
+        margin-top: 2rem !important;
+    }
+
+    .mb-5 {
+        margin-bottom: 2rem !important;
+    }
+
+    /* Fix long text in table */
+    table {
+        table-layout: auto;
+    }
+
+    table td {
+        word-break: break-word;
+        min-width: 80px;
+    }
+
+    /* Fix checkbox column */
+    table td:first-child,
+    table th:first-child {
+        min-width: 40px;
+        width: 40px;
+    }
+}
+
+/* Landscape mobile phones */
+@media (max-height: 500px) and (orientation: landscape) {
+    .content {
+        padding-top: 0.5rem !important;
+    }
+
+    .mt-5 {
+        margin-top: 1rem !important;
+    }
+}
+
+/* Prevent horizontal scroll */
+body {
+    overflow-x: hidden;
+}
+
+html, body {
+    max-width: 100%;
+}
+
+/* Better touch targets for mobile buttons */
+@media (hover: none) and (pointer: coarse) {
+    .btn-touch {
+        min-height: 44px;
+        min-width: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Exception for table buttons */
+    table .btn {
+        min-height: 36px;
+        min-width: 36px;
+    }
+}
