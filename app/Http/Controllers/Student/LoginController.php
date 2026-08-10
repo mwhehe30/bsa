@@ -18,11 +18,18 @@ class LoginController extends Controller
      */
     public function __invoke(Request $request)
     {
+        // Normalisasi lebih dulu agar spasi hasil copy/paste tidak membuat OTP
+        // yang sebenarnya benar ditolak.
+        $request->merge([
+            'email' => strtolower(trim((string) $request->email)),
+            'otp' => preg_replace('/\D/', '', (string) $request->otp),
+        ]);
+
         //validate the form data
         $request->validate([
             'email'     => 'required|email',
             'password'  => 'required',
-            'otp'       => 'required|size:6',
+            'otp'       => ['required', 'digits:6'],
         ]);
 
         // Rate limiting per email (bukan per IP) - allow multiple students dari IP yang sama
@@ -81,7 +88,12 @@ class LoginController extends Controller
         RateLimiter::clear($rateLimitKey);
 
         //login the user
-        auth()->guard('student')->login($student, $request->remember);
+        auth()->guard('student')->login($student, $request->boolean('remember'));
+
+        // Login manual tidak meregenerasi session ID secara otomatis. Tanpa
+        // ini, sebagian browser/proxy dapat membawa session lama ke request
+        // dashboard sehingga middleware menganggap siswa belum login.
+        $request->session()->regenerate();
 
         //clear OTP
         $student->update([
@@ -90,6 +102,6 @@ class LoginController extends Controller
         ]);
 
         //redirect to dashboard
-        return redirect()->route('student.dashboard');
+        return redirect()->intended(route('student.dashboard'));
     }
 }

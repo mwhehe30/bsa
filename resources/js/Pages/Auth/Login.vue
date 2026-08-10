@@ -304,6 +304,9 @@
                                                     v-for="(digit, index) in 6"
                                                     :key="index"
                                                     type="text"
+                                                    inputmode="numeric"
+                                                    pattern="[0-9]*"
+                                                    autocomplete="one-time-code"
                                                     class="form-control fw-bold text-center otp-box"
                                                     :class="{
                                                         'is-invalid': otpError,
@@ -380,6 +383,19 @@
                                                 }}s)</span
                                             >
                                             <span v-else>Kirim Ulang OTP</span>
+                                        </button>
+                                    </div>
+
+                                    <div class="d-grid">
+                                        <button
+                                            type="submit"
+                                            class="btn btn-gray-800"
+                                            :disabled="studentLoading"
+                                        >
+                                            <span v-if="studentLoading">
+                                                Memverifikasi OTP...
+                                            </span>
+                                            <span v-else>MASUK DASHBOARD</span>
                                         </button>
                                     </div>
                                 </form>
@@ -640,7 +656,6 @@ export default {
             studentForm.otp = fullOtp;
             if (fullOtp.length === 6) {
                 otpError.value = "";
-                submitStudent();
             } else {
                 otpError.value = "";
             }
@@ -659,11 +674,15 @@ export default {
         };
 
         const submitStudent = () => {
+            studentForm.otp = otpDigits.value.join("");
+
             if (studentForm.otp.length !== 6) {
                 otpError.value = "Kode OTP harus 6 digit";
                 otpRefs.value[0]?.focus();
                 return;
             }
+
+            if (studentLoading.value) return;
 
             studentLoading.value = true;
             router.post("/student/login", studentForm, {

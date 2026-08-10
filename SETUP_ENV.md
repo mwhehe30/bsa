@@ -150,14 +150,27 @@ Buka **http://localhost:8000** di browser.
 | `CACHE_STORE` | ✅ | `database` |
 | `SESSION_DRIVER` | ✅ | `database` |
 | `MAIL_MAILER` | ⬜ | `log` (dev) / `smtp` (production) |
-| `MAIL_HOST` | ⬜ | Host SMTP, mis. `smtp.gmail.com` |
+| `MAIL_HOST` | ⬜ | Host Mailtrap SMTP: `live.smtp.mailtrap.io` |
 | `MAIL_PORT` | ⬜ | `587` (TLS) |
-| `MAIL_USERNAME` / `MAIL_PASSWORD` | ⬜ | Kredensial email pengirim |
-| `MAIL_FROM_ADDRESS` | ⬜ | Alamat pengirim email |
+| `MAIL_USERNAME` / `MAIL_PASSWORD` | ⬜ | `api` / API token Mailtrap (rahasia) |
+| `MAIL_FROM_ADDRESS` | ⬜ | Alamat pengirim dari domain yang sudah diverifikasi di Mailtrap |
+| `MAIL_FROM_NAME` | ⬜ | Nama pengirim email (default `${APP_NAME}`) |
 | `API_KEY_TINYMCE` | ⬜ | Key editor soal dari tiny.cloud |
 | `VITE_REVERB_*` | ✅ | **Wajib sama dengan `REVERB_*`** — dipakai frontend untuk WebSocket |
 
 > ⚠️ **PENTING**: `VITE_*` di-bake saat `npm run build`. Jadi kalau ganti `REVERB_HOST`/`REVERB_*`, **wajib build ulang frontend** (`npm run build`).
+
+### Tes Kirim Email (Mailtrap SMTP)
+
+Setelah `MAIL_*` terisi, verifikasi kirim email:
+
+```bash
+php artisan config:clear
+php artisan mail:test email-tujuan@contoh.com
+```
+
+- ✅ **Sukses**: email terkirim — cek inbox & spam, plus log kirim di [https://mailtrap.io/sending/email_logs](https://mailtrap.io/sending/email_logs)
+- ❌ **`550 ... Sending from domain X is not allowed`**: token salah akun / domain belum diverifikasi (lihat Troubleshooting)
 
 ---
 
@@ -193,12 +206,13 @@ REVERB_SCHEME=https
 FILESYSTEM_DISK=public
 
 MAIL_MAILER=smtp
-MAIL_HOST=smtp.gmail.com
+MAIL_SCHEME=null
+MAIL_HOST=live.smtp.mailtrap.io
 MAIL_PORT=587
-MAIL_USERNAME=email@pengirim.com
-MAIL_PASSWORD=app-password
-MAIL_ENCRYPTION=tls
-MAIL_FROM_ADDRESS="email@pengirim.com"
+MAIL_USERNAME=api
+MAIL_PASSWORD=<YOUR_API_TOKEN>
+MAIL_FROM_ADDRESS="noreply@cbt.getvisitrack.tech"
+MAIL_FROM_NAME="${APP_NAME}"
 
 API_KEY_TINYMCE=isi-api-key
 ```
@@ -302,6 +316,8 @@ server {
 | Editor TinyMCE kosong | `API_KEY_TINYMCE` belum diisi | Isi key dari tiny.cloud, restart `npm run build` |
 | Import soal menggantung | Queue worker tidak jalan | Jalankan `php artisan queue:work` |
 | Push ke GitHub ditolak "contains secrets" | Ada token/secret ter-commit | Hapus secret dari commit, amend: `git add -A && git commit --amend --no-edit` |
+| Email gagal `550 Sending from domain X is not allowed` | `MAIL_PASSWORD` dari akun yang tidak punya domain X, atau domain belum verified / compliance belum selesai | Ambil token dari **Email Sending → Sending Domains → domain → Integration**, pastikan status **Verified** + compliance selesai |
+| Email gagal `550` / kredensial ditolak | Token `MAIL_PASSWORD` salah atau salah akun | Salin ulang token dari halaman Integration domain yang benar |
 
 ---
 

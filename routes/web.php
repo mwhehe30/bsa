@@ -3,10 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Hash;
 
-// Route Landing Page
-Route::get('/', function () {
-    return view('welcome');
-})->name('home');
+// Aplikasi langsung membuka halaman login.
+Route::redirect('/', '/login')->name('home');
 
 // Route Test UI Kecermatan (Inertia Vue) - hanya untuk pengembangan lokal
 if (app()->environment('local')) {

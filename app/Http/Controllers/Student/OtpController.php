@@ -76,7 +76,7 @@ class OtpController extends Controller
                     ->subject('Kode OTP Login Ujian Online');
             });
 
-            return redirect()->back()->with('success', 'Kode OTP telah dikirim ke email Anda.');
+            return redirect()->back()->with('success', 'Kode OTP telah dikirim ke email ' . $student->email . '. Cek inbox (jangan lupa folder spam).');
         } catch (\Exception $e) {
             // Log error for debugging
             Log::error('Failed to send OTP email: ' . $e->getMessage(), [
