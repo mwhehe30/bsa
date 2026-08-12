@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class Lesson extends Model
 {
+    protected $appends = ['thumbnail_url'];
+
     /**
      * fillable
      *
@@ -14,6 +16,7 @@ class Lesson extends Model
     protected $fillable = [
         'name',
         'category',
+        'thumbnail',
         'is_active',
         'order'
     ];
@@ -26,6 +29,13 @@ class Lesson extends Model
     protected $casts = [
         'is_active' => 'boolean',
     ];
+
+    public function getThumbnailUrlAttribute(): ?string
+    {
+        return $this->thumbnail
+            ? '/storage/'.ltrim($this->thumbnail, '/')
+            : null;
+    }
 
     /**
      * Scope untuk mapel psikologi

@@ -132,7 +132,6 @@
                                         </th>
                                     </tr>
                                 </thead>
-                                <div class="mt-2"></div>
                                 <tbody>
                                     <tr
                                         v-for="(

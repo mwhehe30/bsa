@@ -1,5 +1,5 @@
 <template>
-    <Head :title="'Tes Kecermatan - Kolom ' + currentColumn" />
+    <Head :title="'Tes Kecermatan - Kolom ' + currentColumn + ' - Buweuk Sipit Academy'" />
 
     <!-- Fullscreen Container -->
     <div class="exam-fullscreen bg-white">
@@ -142,7 +142,7 @@
                             selected: activeQuestion.student_answer === letter,
                             'answer-clicked': clickedLetter === letter,
                         }"
-                        @click="selectAnswer(letter)"
+                        @click="selectAnswer(letter, $event)"
                     >
                         <span class="answer-number d-none d-md-inline">{{
                             index + 1
@@ -244,12 +244,12 @@
         </div>
     </div>
 
-    <!-- Loading Overlay - Simple & Clean -->
+    <!-- Loading Overlay - Dark Theme -->
     <div v-show="isSubmitting" class="loading-overlay-simple">
         <div class="loading-card-simple">
             <div class="spinner-simple"></div>
-            <h3 class="mt-4 mb-2 text-dark fw-bold">{{ submittingMessage }}</h3>
-            <p class="text-muted mb-0">Mohon tunggu sebentar...</p>
+            <h3 class="mt-4 mb-2 text-white fw-bold">{{ submittingMessage }}</h3>
+            <p class="text-white-50 mb-0">Mohon tunggu sebentar...</p>
         </div>
     </div>
 </template>
@@ -257,6 +257,11 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { Head, router } from "@inertiajs/vue3";
+import {
+    csrfHeaders,
+    refreshCsrfToken,
+    fetchJsonWithCsrf,
+} from "../../../utils/csrf";
 
 const props = defineProps({
     session: Object,
@@ -339,8 +344,86 @@ const submittingMessage = ref("");
 // key = question_id, value = { answer, time_spent }.
 const answerQueue = new Map();
 const BATCH_SIZE = 25;
+const ANSWER_BACKUP_TTL_MS = 10 * 60 * 1000;
+const answerBackupKey = `kecermatan-answer-backup:${props.session.id}`;
 let flushing = false;
 let flushPromise = null;
+let answerBackupExpiryTimer = null;
+
+const clearAnswerBackup = () => {
+    sessionStorage.removeItem(answerBackupKey);
+    if (answerBackupExpiryTimer) {
+        clearTimeout(answerBackupExpiryTimer);
+        answerBackupExpiryTimer = null;
+    }
+};
+
+const scheduleAnswerBackupExpiry = (expiresAt) => {
+    if (answerBackupExpiryTimer) clearTimeout(answerBackupExpiryTimer);
+
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+        clearAnswerBackup();
+        return;
+    }
+
+    answerBackupExpiryTimer = setTimeout(
+        clearAnswerBackup,
+        Math.min(remaining, 2147483647),
+    );
+};
+
+const persistAnswerBackup = () => {
+    if (answerQueue.size === 0) {
+        clearAnswerBackup();
+        return;
+    }
+
+    let expiresAt = Date.now() + ANSWER_BACKUP_TTL_MS;
+    try {
+        const existing = JSON.parse(sessionStorage.getItem(answerBackupKey));
+        if (existing?.expires_at > Date.now()) expiresAt = existing.expires_at;
+    } catch (_) {
+        // Data lama rusak: timpa dengan backup baru.
+    }
+
+    sessionStorage.setItem(
+        answerBackupKey,
+        JSON.stringify({
+            expires_at: expiresAt,
+            answers: [...answerQueue.entries()],
+        }),
+    );
+    scheduleAnswerBackupExpiry(expiresAt);
+};
+
+const restoreAnswerBackup = () => {
+    try {
+        const backup = JSON.parse(sessionStorage.getItem(answerBackupKey));
+        if (!backup || backup.expires_at <= Date.now() || !Array.isArray(backup.answers)) {
+            clearAnswerBackup();
+            return;
+        }
+
+        backup.answers.forEach(([questionId, data]) => {
+            const numericId = Number(questionId);
+            if (!numericId || !data?.answer) return;
+
+            answerQueue.set(numericId, data);
+
+            Object.keys(allColumnsMap.value).forEach((column) => {
+                const question = allColumnsMap.value[column]?.find(
+                    (item) => Number(item.id) === numericId,
+                );
+                if (question) question.student_answer = data.answer;
+            });
+        });
+
+        scheduleAnswerBackupExpiry(backup.expires_at);
+    } catch (_) {
+        clearAnswerBackup();
+    }
+};
 
 // Kirim jawaban antrean sebagai satu request batch. Hanya satu flush yang
 // boleh berjalan dalam satu waktu; sisanya menunggu giliran. Jawaban yang
@@ -365,25 +448,25 @@ const flushAnswers = async () => {
                 }));
 
                 try {
-                    await fetchJsonWithRetry(
+                    await fetchJsonWithCsrf(
                         "/student/kecermatan/submit-answers",
                         {
                             method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                                "X-CSRF-TOKEN": getCsrfToken(),
-                                Accept: "application/json",
-                            },
+                            headers: csrfHeaders(),
                             body: JSON.stringify({ answers: body }),
                         },
-                        3,
-                        10000,
+                        {
+                            csrfRefreshUrl: "/student/kecermatan/csrf-token",
+                            maxAttempts: 3,
+                            timeoutMs: 10000,
+                        },
                     );
 
                     // Sukses: buang jawaban yang sudah tersimpan.
                     batch.forEach(([question_id]) =>
                         answerQueue.delete(question_id),
                     );
+                    persistAnswerBackup();
                 } catch (error) {
                     // Gagal: berhenti dulu, biarkan jawaban di antrean.
                     // Interval flush berikutnya (1,5 detik) atau finalisasi
@@ -420,11 +503,7 @@ const flushOnPageHide = () => {
         fetch("/student/kecermatan/submit-answers", {
             method: "POST",
             keepalive: true,
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRF-TOKEN": getCsrfToken(),
-                Accept: "application/json",
-            },
+            headers: csrfHeaders(),
             body: JSON.stringify({ answers: body }),
         }).catch(() => {});
     } catch (e) {
@@ -437,52 +516,8 @@ const flushOnPageHide = () => {
 // urutan, jadi antrean ini hanya pengaman tambahan, bukan penentu hasil.
 let columnFinalizationChain = Promise.resolve();
 
-const getCsrfToken = () => {
-    return document.querySelector('meta[name="csrf-token"]')?.content || "";
-};
-
-// Timeout per percobaan (ms) agar request yang menggantung tidak membuat
-// overlay "menunggu hasil" berputar selamanya.
-const REQUEST_TIMEOUT_MS = 10000;
-
-const fetchJsonWithRetry = async (url, options, maxAttempts = 3, timeoutMs = REQUEST_TIMEOUT_MS) => {
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-        try {
-            const response = await fetch(url, {
-                ...options,
-                signal: controller.signal,
-            });
-            const data = await response.json().catch(() => ({}));
-
-            if (!response.ok) {
-                throw new Error(
-                    data.message ||
-                        data.error ||
-                        `Request gagal dengan status HTTP ${response.status}`,
-                );
-            }
-
-            return data;
-        } catch (error) {
-            lastError = error;
-
-            if (attempt < maxAttempts) {
-                await new Promise((resolve) =>
-                    setTimeout(resolve, attempt * 300),
-                );
-            }
-        } finally {
-            clearTimeout(timeoutId);
-        }
-    }
-
-    throw lastError || new Error("Request gagal diproses.");
-};
+// Logika CSRF (baca token, refresh saat 419, fetch + retry) dipindah ke
+// resources/js/utils/csrf.js agar dipakai bersama oleh semua halaman.
 
 // Tunggu jawaban tersimpan dengan batas waktu. Jika ada yang gagal atau
 // timeout, tetap lanjutkan: backend menghitung hasil dari database, jadi
@@ -515,24 +550,44 @@ const waitForAnswerRequests = async (requests, timeoutMs = 6000) => {
     }
 };
 
+// Sisa jawaban di antrean yang belum sempat terkirim batch — disertakan dalam
+// request finalisasi (column-timeout) maupun force-finish agar backend
+// menyimpannya dan menghitung hasil dalam satu transaksi. Tidak ada jawaban
+// yang tertinggal hanya karena batch terakhir gagal.
+const pendingAnswersPayload = () =>
+    [...answerQueue.entries()].map(([question_id, data]) => ({
+        question_id,
+        answer: data.answer,
+        time_spent: data.time_spent,
+    }));
+
 const submitColumnResult = async (columnNumber) => {
     // Pastikan jawaban kolom ini sudah masuk database sebelum dihitung.
     await waitForAnswerRequests([flushAnswers()], 6000);
 
-    return fetchJsonWithRetry(
+    // Pada server produksi request batch bisa lebih lama dari batas tunggu.
+    // Sertakan kembali antrean yang tersisa dalam request finalisasi agar
+    // backend menyimpannya dan menghitung hasil dalam satu transaksi.
+    const pendingBatch = pendingAnswersPayload();
+
+    const result = await fetchJsonWithCsrf(
         `/student/kecermatan/${props.session.id}/column-timeout`,
         {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRF-TOKEN": getCsrfToken(),
-                Accept: "application/json",
-            },
+            headers: csrfHeaders(),
             body: JSON.stringify({
                 column_number: columnNumber,
+                answers: pendingBatch,
             }),
         },
+        { csrfRefreshUrl: "/student/kecermatan/csrf-token" },
     );
+
+    // Jawaban di atas sudah disimpan atomik oleh backend.
+    pendingBatch.forEach(({ question_id }) => answerQueue.delete(question_id));
+    persistAnswerBackup();
+
+    return result;
 };
 
 const enqueueColumnFinalization = (columnNumber) => {
@@ -632,12 +687,20 @@ const nextColumn = async () => {
                 submittingMessage.value = "Menyelesaikan ujian...";
                 await exitFullscreenSafely();
 
+                // Sertakan sisa jawaban agar tidak ada yang terlewat walau
+                // batch terakhir gagal dikirim.
+                const pendingBatch = pendingAnswersPayload();
+
                 router.post(
                     `/student/kecermatan/${props.session.id}/force-finish`,
-                    {},
+                    { answers: pendingBatch },
                     {
                         preserveState: false,
                         preserveScroll: false,
+                        onSuccess: () => {
+                            answerQueue.clear();
+                            clearAnswerBackup();
+                        },
                         onError: () => {
                             isSubmitting.value = false;
                             columnFinishing = false;
@@ -694,8 +757,8 @@ const startTimer = () => {
     columnFinishing = false;
 
     timerInterval = setInterval(() => {
-        if (isBlocked.value) return; // Pause timer while student is blocked by admin
-
+        // Timer TETAP berjalan meski siswa diblokir: waktu blokir terhitung.
+        // Jika habis, kolom otomatis berpindah (nextColumn dipicu di bawah).
         if (timeLeft.value > 0) {
             timeLeft.value--;
 
@@ -751,8 +814,10 @@ const progressPercentage = computed(() => {
 const clickedLetter = ref(null);
 
 // Instant 0ms selectAnswer!
-const selectAnswer = (letter) => {
+const selectAnswer = (letter, event = null) => {
     if (isBlocked.value || isSubmitting.value || columnFinishing) return;
+
+    event?.currentTarget?.blur?.();
 
     const q = activeQuestion.value;
     if (!q || !q.id) return;
@@ -798,6 +863,7 @@ const selectAnswer = (letter) => {
     // Jawaban masuk antrean lokal dulu (UI sudah instan), lalu dikirim 1
     // request per beberapa jawaban agar tidak membanjiri server.
     answerQueue.set(questionId, { answer: letter, time_spent: timeSpent });
+    persistAnswerBackup();
 
     // Jika antrean sudah besar, segera kirim tanpa menunggu interval.
     if (answerQueue.size >= BATCH_SIZE) {
@@ -811,20 +877,6 @@ const handleKeyPress = (e) => {
     if (keyMap[e.key] && !isBlocked.value) {
         selectAnswer(keyMap[e.key]);
     }
-};
-
-// Timer countdown timeout -> move to next column
-const handleTimeout = () => {
-    router.post(
-        `/student/kecermatan/${props.session.id}/column-timeout`,
-        {
-            column_number: props.session.current_column,
-        },
-        {
-            preserveState: false,
-            preserveScroll: false,
-        },
-    );
 };
 
 // Fullscreen handling
@@ -963,18 +1015,10 @@ const logViolation = async (type) => {
     }
 
     isLoggingViolation = true;
-    lastViolationTime = now;
-
-    try {
-        const response = await fetch("/student/kecermatan/log-violation", {
+    lastViolationTime = now;    try {
+        let response = await fetch("/student/kecermatan/log-violation", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRF-TOKEN": document.querySelector(
-                    'meta[name="csrf-token"]',
-                )?.content || "",
-                Accept: "application/json",
-            },
+            headers: csrfHeaders(),
             body: JSON.stringify({
                 session_id: props.session.id,
                 violation_type: type,
@@ -982,6 +1026,28 @@ const logViolation = async (type) => {
                 question_number: currentIndex.value + 1,
             }),
         });
+
+        // CSRF token basi: ambil token baru dari server lalu ulangi sekali.
+        // Respons refresh memperbarui cookie XSRF-TOKEN, jadi csrfHeaders()
+        // otomatis memakai token baru.
+        if (response.status === 419) {
+            const freshToken = await refreshCsrfToken(
+                "/student/kecermatan/csrf-token",
+                true,
+            );
+            if (freshToken) {
+                response = await fetch("/student/kecermatan/log-violation", {
+                    method: "POST",
+                    headers: csrfHeaders(),
+                    body: JSON.stringify({
+                        session_id: props.session.id,
+                        violation_type: type,
+                        column_number: currentColumn.value,
+                        question_number: currentIndex.value + 1,
+                    }),
+                });
+            }
+        }
 
         // Handle both success (200) and blocked (403) responses
         if (response.ok || response.status === 403) {
@@ -1029,7 +1095,12 @@ const checkStatus = async () => {
                 gracePeriod.value = true;
 
                 if (data.remaining_seconds !== undefined) {
-                    timeLeft.value = data.remaining_seconds; // Only sync on unblock
+                    // Math.min mencegah server (yang mungkin masih mencatat kolom
+                    // lama saat finalisasi kolom berjalan) memberi waktu tambahan.
+                    timeLeft.value = Math.min(
+                        timeLeft.value,
+                        data.remaining_seconds,
+                    );
                 }
 
                 startTimer();
@@ -1062,12 +1133,20 @@ const autoSubmitExam = async () => {
         await waitForAnswerRequests([flushAnswers()], 6000);
         await exitFullscreenSafely();
 
+        // Sertakan sisa jawaban agar tidak ada yang terlewat walau batch
+        // terakhir gagal dikirim.
+        const pendingBatch = pendingAnswersPayload();
+
         router.post(
             `/student/kecermatan/${props.session.id}/force-finish`,
-            {},
+            { answers: pendingBatch },
             {
                 preserveState: false,
                 preserveScroll: false,
+                onSuccess: () => {
+                    answerQueue.clear();
+                    clearAnswerBackup();
+                },
                 onError: () => {
                     isSubmitting.value = false;
                     alert("Ujian gagal diselesaikan. Silakan coba kembali.");
@@ -1094,6 +1173,8 @@ const formatViolationTime = (timeStr) => {
 };
 
 onMounted(() => {
+    restoreAnswerBackup();
+
     // Request fullscreen
     enterFullscreen();
 
@@ -1165,6 +1246,7 @@ onUnmounted(() => {
     if (checkStatusInterval) clearInterval(checkStatusInterval);
     if (fullscreenCheckInterval) clearInterval(fullscreenCheckInterval);
     if (answerFlushInterval) clearInterval(answerFlushInterval);
+    if (answerBackupExpiryTimer) clearTimeout(answerBackupExpiryTimer);
 
     window.removeEventListener("pagehide", flushOnPageHide);
 });
@@ -1261,6 +1343,13 @@ onUnmounted(() => {
 }
 
 /* Answer Buttons */
+.reference-box .card,
+.question-box .card,
+.reference-value,
+.question-value {
+    box-shadow: none !important;
+}
+
 .answer-btn {
     position: relative;
     font-size: 3.2rem;
@@ -1277,18 +1366,17 @@ onUnmounted(() => {
     justify-content: center;
 }
 
-.answer-btn:hover:not(:disabled) {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-    border-color: #0d6efd;
-    background: #e7f1ff;
-}
-
 .answer-btn.selected {
     background: #0d6efd;
     color: white;
     border-color: #0d6efd;
     transform: scale(1.05);
+}
+
+.answer-btn:focus,
+.answer-btn:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
 }
 
 .answer-btn.answer-clicked {
@@ -1456,6 +1544,15 @@ onUnmounted(() => {
 
 /* Responsive */
 @media (max-width: 768px) {
+    .exam-content {
+        justify-content: center !important;
+        padding-top: 0 !important;
+    }
+
+    .exam-content > .container {
+        transform: translateY(-6vh);
+    }
+
     .timer-display {
         font-size: 2rem;
     }
@@ -1486,6 +1583,24 @@ onUnmounted(() => {
 }
 
 @media (max-width: 576px) {
+    .exam-content {
+        padding-top: 0 !important;
+        padding-bottom: 0.75rem !important;
+    }
+
+    .exam-content > .container {
+        transform: translateY(-5vh);
+    }
+
+    .reference-box,
+    .question-box {
+        margin-bottom: 0.9rem !important;
+    }
+
+    .answer-buttons {
+        margin-bottom: 0.9rem !important;
+    }
+
     .timer-display {
         font-size: 1.5rem;
     }
@@ -1530,17 +1645,55 @@ onUnmounted(() => {
     .alert {
         display: none;
     }
+
+    .violation-list {
+        padding: 10px;
+    }
+
+    .violation-item {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr);
+        grid-template-rows: auto auto;
+        column-gap: 10px;
+        row-gap: 5px;
+        align-items: center;
+        padding: 10px;
+    }
+
+    .violation-number {
+        grid-column: 1;
+        grid-row: 1 / 3;
+        width: 28px;
+        height: 28px;
+    }
+
+    .violation-badge {
+        grid-column: 2;
+        grid-row: 1;
+        min-width: 0;
+        padding: 4px 8px;
+        border-radius: 7px;
+        white-space: normal;
+    }
+
+    .violation-time {
+        grid-column: 2;
+        grid-row: 2;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 0.78rem;
+        font-weight: 600;
+    }
 }
 
-/* Loading Overlay - Simple & Clean */
+/* Loading Overlay - Dark Theme */
 .loading-overlay-simple {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(4px);
+    background: rgba(10, 15, 30, 0.88);
+    backdrop-filter: blur(6px);
     z-index: 10000;
     display: flex;
     align-items: center;
@@ -1551,10 +1704,10 @@ onUnmounted(() => {
 .loading-card-simple {
     text-align: center;
     padding: 3rem 2rem;
-    background: white;
+    background: #1e293b;
     border-radius: 16px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-    border: 1px solid rgba(0, 0, 0, 0.05);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     min-width: 320px;
 }
 
@@ -1562,8 +1715,8 @@ onUnmounted(() => {
     width: 64px;
     height: 64px;
     margin: 0 auto;
-    border: 4px solid #e9ecef;
-    border-top-color: #0d6efd;
+    border: 4px solid rgba(255, 255, 255, 0.15);
+    border-top-color: #60a5fa;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
 }

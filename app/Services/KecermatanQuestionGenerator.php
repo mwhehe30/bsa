@@ -288,14 +288,15 @@ class KecermatanQuestionGenerator
             } else {
                 $wrong++;
             }
-            $timeSpent += $q->time_spent;
+            // Nilai setiap jawaban bersifat kumulatif sejak awal kolom.
+            $timeSpent = max($timeSpent, (int) $q->time_spent);
         }
 
         return [
             'correct_count' => $correct,
             'wrong_count' => $wrong,
             'unanswered_count' => $unanswered,
-            'time_spent' => $timeSpent,
+            'time_spent' => min(60, $timeSpent),
         ];
     }
 }

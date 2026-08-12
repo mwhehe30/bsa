@@ -136,6 +136,10 @@ export default {
 .btn-avatar {
     width: 40px;
     height: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    flex: 0 0 40px;
+    aspect-ratio: 1 / 1;
     padding: 0;
     display: flex;
     align-items: center;
@@ -210,7 +214,8 @@ export default {
     }
 
     .navbar {
-        padding: 12px 0 !important;
+        padding: 10px 0 !important;
+        margin-bottom: 1rem !important;
     }
 
     .navbar-collapse {
@@ -220,10 +225,25 @@ export default {
     .btn-avatar {
         width: 35px;
         height: 35px;
+        min-height: 35px !important;
+        min-width: 35px;
+        max-width: 35px;
+        flex-basis: 35px;
+        border-radius: 50% !important;
+        padding: 0 !important;
     }
 
     .avatar-initial {
         font-size: 15px;
+    }
+
+    .mobile-actions .btn-danger {
+        width: 35px;
+        height: 35px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
     }
 }
 </style>

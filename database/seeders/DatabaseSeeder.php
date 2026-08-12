@@ -14,6 +14,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             UserTableSeeder::class, // Admin
             LessonSeeder::class,    // Mapel
+            StudentSeeder::class,   // Siswa test
         ]);
     }
 }

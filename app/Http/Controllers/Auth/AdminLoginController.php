@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Auth;
 
+use App\Helpers\TimeNoticeMessage;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -16,6 +17,10 @@ class AdminLoginController extends Controller
         $credentials = $request->validate([
             'email' => 'required|email',
             'password' => 'required',
+        ], [
+            'email.required' => 'Email wajib diisi.',
+            'email.email'    => 'Format email tidak valid.',
+            'password.required' => 'Password wajib diisi.',
         ]);
 
         // Rate limiting per email (bukan per IP)
@@ -23,10 +28,12 @@ class AdminLoginController extends Controller
 
         if (RateLimiter::tooManyAttempts($rateLimitKey, 5)) {
             $seconds = RateLimiter::availableIn($rateLimitKey);
-            $minutes = ceil($seconds / 60);
 
             return back()->withErrors([
-                'email' => "Terlalu banyak percobaan login gagal. Silakan coba lagi dalam {$minutes} menit.",
+                'email' => TimeNoticeMessage::retryAt(
+                    'Terlalu banyak percobaan login gagal',
+                    $seconds,
+                ),
             ])->onlyInput('email');
         }
 

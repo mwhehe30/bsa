@@ -255,11 +255,8 @@
     </div>
 
     <!-- Blocked Overlay -->
-    <div
-        v-if="isBlocked"
-        class="blocked-overlay d-flex align-items-center justify-content-center"
-    >
-        <div class="overlay-content p-5 text-center text-white">
+    <div v-if="isBlocked" class="blocked-overlay">
+        <div class="overlay-content">
             <i class="fa fa-lock fa-4x text-danger mb-3"></i>
             <h2 class="mb-2">Anda Diblokir!</h2>
             <p class="lead mb-1">
@@ -268,18 +265,23 @@
 
             <!-- Pesan berbeda berdasarkan jumlah pelanggaran -->
             <div v-if="violationCount >= 3">
-                <p class="text-danger mb-2" style="font-size: 1.2em; font-weight: bold;">
+                <p
+                    class="text-danger mb-2"
+                    style="font-size: 1.2em; font-weight: bold"
+                >
                     <i class="fa fa-exclamation-triangle me-1"></i>
-                    Pelanggaran ke-{{ violationCount }}! Ujian Anda akan otomatis disubmit.
+                    Pelanggaran ke-{{ violationCount }}! Ujian Anda akan
+                    otomatis disubmit.
                 </p>
             </div>
             <div v-else>
-                <p class="text-warning mb-2" style="font-size: 1.1em;">
+                <p class="text-warning mb-2" style="font-size: 1.1em">
                     <i class="fa fa-exclamation-circle me-1"></i>
                     Pelanggaran ke-{{ violationCount }} dari 3.
                 </p>
                 <p class="text-muted mb-4">
-                    Silakan hubungi pengawas untuk membuka blokir dan melanjutkan ujian.
+                    Silakan hubungi pengawas untuk membuka blokir dan
+                    melanjutkan ujian.
                 </p>
             </div>
 
@@ -293,15 +295,12 @@
                 <div
                     v-for="(v, i) in violations"
                     :key="i"
-                    class="violation-item d-flex align-items-center justify-content-between"
+                    class="violation-item"
                 >
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="violation-number">{{ i + 1 }}</span>
-                        <span class="violation-badge badge-tab">
-                            <i class="fa fa-share-square"></i>
-                            Pindah Tab/Aplikasi
-                        </span>
-                    </div>
+                    <span class="violation-number">{{ i + 1 }}</span>
+                    <span class="violation-badge">
+                        <i class="fa fa-share-square"></i> Pindah Tab/Aplikasi
+                    </span>
                     <span class="violation-time">{{
                         formatViolationTime(v.violation_time)
                     }}</span>
@@ -390,6 +389,11 @@ import { ref, onMounted, onBeforeUnmount, computed, watch } from "vue";
 import VueCountdown from "@chenfengyuan/vue-countdown";
 import Swal from "sweetalert2";
 import { sanitizeHtml } from "../../../utils/sanitize";
+import {
+    csrfHeaders,
+    refreshCsrfToken,
+    fetchJsonWithCsrf,
+} from "../../../utils/csrf";
 
 export default {
     layout: LayoutStudent,
@@ -538,23 +542,37 @@ export default {
             if (gracePeriod.value || isBlocked.value) return;
 
             try {
-                const response = await fetch(
+                const buildRequest = () => ({
+                    method: "POST",
+                    headers: csrfHeaders(),
+                    body: JSON.stringify({
+                        exam_group_id: examGroupId,
+                        exam_id: examId,
+                        violation_type: type,
+                    }),
+                });
+
+                let response = await fetch(
                     "/student/exam-security/log-violation",
-                    {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "X-CSRF-TOKEN": document.querySelector(
-                                'meta[name="csrf-token"]',
-                            ).content,
-                        },
-                        body: JSON.stringify({
-                            exam_group_id: examGroupId,
-                            exam_id: examId,
-                            violation_type: type,
-                        }),
-                    },
+                    buildRequest(),
                 );
+
+                // CSRF token basi: ambil token baru dari server lalu ulangi
+                // sekali. Respons refresh memperbarui cookie XSRF-TOKEN, jadi
+                // buildRequest() otomatis memakai token baru.
+                if (response.status === 419) {
+                    const freshToken = await refreshCsrfToken(
+                        "/student/csrf-token",
+                        true,
+                    );
+                    if (freshToken) {
+                        response = await fetch(
+                            "/student/exam-security/log-violation",
+                            buildRequest(),
+                        );
+                    }
+                }
+
                 const data = await response.json();
                 if (data.is_blocked) {
                     isBlocked.value = true;
@@ -841,21 +859,21 @@ export default {
         // localStorage dan dikirim lengkap saat endExam/autoSubmitExam.
         const saveAnswerToServer = async (questionId, answer) => {
             try {
-                const response = await fetch("/student/exam-answer", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-CSRF-TOKEN": document.querySelector(
-                            'meta[name="csrf-token"]',
-                        ).content,
+                // fetchJsonWithCsrf otomatis refresh CSRF token saat 419
+                // lalu mengulang request sekali dengan token baru.
+                const data = await fetchJsonWithCsrf(
+                    "/student/exam-answer",
+                    {
+                        method: "POST",
+                        headers: csrfHeaders(),
+                        body: JSON.stringify({
+                            grade_id: props.grade?.id || props.exam_group?.id,
+                            question_id: questionId,
+                            answer: answer,
+                        }),
                     },
-                    body: JSON.stringify({
-                        grade_id: props.grade?.id || props.exam_group?.id,
-                        question_id: questionId,
-                        answer: answer,
-                    }),
-                });
-                const data = await response.json();
+                    { csrfRefreshUrl: "/student/csrf-token" },
+                );
                 // Waktu habis saat menyimpan → langsung auto-submit
                 if (data && data.time_up) {
                     autoSubmitExam();
@@ -943,7 +961,7 @@ export default {
                 text: "Apakah Anda yakin ingin men-submit semua jawaban?",
                 icon: "question",
                 showCancelButton: true,
-                confirmButtonColor: "#4f46e5",
+                confirmButtonColor: "#1A2332",
                 cancelButtonColor: "#94a3b8",
                 confirmButtonText: "Ya, Submit!",
                 cancelButtonText: "Batal",
@@ -1074,7 +1092,7 @@ export default {
     align-items: center;
     justify-content: center;
     border-radius: 12px;
-    color: #4f46e5;
+    color: #1A2332;
     background: #eef2ff;
     font-size: 1.2rem;
 }
@@ -1147,7 +1165,7 @@ export default {
 }
 
 .text-indigo {
-    color: #4f46e5;
+    color: #1A2332;
 }
 
 /* ── Badges ────────────────────────────────────── */
@@ -1162,7 +1180,7 @@ export default {
 
 .badge-indigo {
     background: #e0e7ff;
-    color: #4f46e5;
+    color: #1A2332;
 }
 
 .badge-green {
@@ -1205,13 +1223,13 @@ export default {
 }
 
 .option-btn:hover {
-    border-color: #a5b4fc;
+    border-color: #1A2332;
     background: #f8fafc;
     transform: translateX(2px);
 }
 
 .option-btn-selected {
-    border-color: #4f46e5;
+    border-color: #1A2332;
     background: #eef2ff;
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
 }
@@ -1226,13 +1244,13 @@ export default {
     border-radius: 8px;
     font-weight: 700;
     font-size: 0.85rem;
-    color: #4f46e5;
+    color: #1A2332;
     background: #eef2ff;
 }
 
 .option-btn-selected .option-letter {
     color: #ffffff;
-    background: #4f46e5;
+    background: #1A2332;
 }
 
 .option-text {
@@ -1263,14 +1281,14 @@ export default {
 }
 
 .grid-btn-answered {
-    background-color: #4f46e5;
+    background-color: #1A2332;
     color: #ffffff;
-    border-color: #4f46e5;
+    border-color: #1A2332;
 }
 
 .grid-btn-active {
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.35);
-    border-color: #4f46e5;
+    border-color: #1A2332;
     font-weight: 800;
 }
 
@@ -1294,12 +1312,12 @@ export default {
 }
 
 .btn-flat-primary {
-    background: #4f46e5;
+    background: #1A2332;
     color: #fff;
 }
 
 .btn-flat-primary:hover:not(:disabled) {
-    background: #4338ca;
+    background: #1A2332;
     color: #fff;
 }
 
@@ -1341,15 +1359,23 @@ export default {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.92);
-    z-index: 9999;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     overflow-y: auto;
 }
 
 .overlay-content {
-    width: 100%;
+    text-align: center;
+    color: white;
+    padding: 2rem;
     max-width: 520px;
-    margin: auto;
+}
+
+.overlay-content h2 {
+    color: white;
 }
 
 .violation-list {
@@ -1361,12 +1387,14 @@ export default {
 }
 
 .violation-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     padding: 8px 12px;
     border-radius: 8px;
     margin-bottom: 6px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.07);
-    transition: background 0.2s;
 }
 
 .violation-item:last-child {
@@ -1387,12 +1415,6 @@ export default {
     flex-shrink: 0;
 }
 
-@media (max-width: 767px) {
-    .violation-number {
-        display: none;
-    }
-}
-
 .violation-badge {
     display: inline-flex;
     align-items: center;
@@ -1401,18 +1423,10 @@ export default {
     font-weight: 600;
     padding: 3px 10px;
     border-radius: 20px;
-}
-
-.badge-tab {
     background: rgba(239, 68, 68, 0.25);
     color: #fca5a5;
     border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.badge-fullscreen {
-    background: rgba(251, 191, 36, 0.2);
-    color: #fde68a;
-    border: 1px solid rgba(251, 191, 36, 0.3);
+    flex-grow: 1;
 }
 
 .violation-time {
@@ -1475,7 +1489,7 @@ export default {
 }
 
 .sheet-search-wrap:focus-within {
-    border-color: #4f46e5;
+    border-color: #1A2332;
     background: #ffffff;
 }
 
@@ -1552,6 +1566,44 @@ export default {
 @media (max-width: 575.98px) {
     .page-wrap {
         padding: 14px 0 48px;
+    }
+
+    .violation-list {
+        padding: 10px;
+    }
+
+    .violation-item {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr);
+        grid-template-rows: auto auto;
+        column-gap: 10px;
+        row-gap: 5px;
+        align-items: center;
+        padding: 10px;
+    }
+
+    .violation-number {
+        grid-column: 1;
+        grid-row: 1 / 3;
+        width: 28px;
+        height: 28px;
+    }
+
+    .violation-badge {
+        grid-column: 2;
+        grid-row: 1;
+        min-width: 0;
+        padding: 4px 8px;
+        border-radius: 7px;
+        white-space: normal;
+    }
+
+    .violation-time {
+        grid-column: 2;
+        grid-row: 2;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 0.78rem;
+        font-weight: 600;
     }
 
     .topbar-mark {

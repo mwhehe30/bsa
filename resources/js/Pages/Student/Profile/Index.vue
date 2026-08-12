@@ -204,7 +204,7 @@ export default {
     color: #1e293b;
 }
 
-.text-indigo { color: #4f46e5; }
+.text-indigo { color: #1A2332; }
 
 /* ── Info table ─────────────────────────────────── */
 .info-table {
@@ -266,7 +266,7 @@ export default {
 }
 
 .input-group-flat:focus-within {
-    border-color: #4f46e5;
+    border-color: #1A2332;
 }
 
 .input-icon {
@@ -320,12 +320,12 @@ export default {
 }
 
 .btn-flat-primary {
-    background: #4f46e5;
+    background: #1A2332;
     color: #fff;
 }
 
 .btn-flat-primary:hover {
-    background: #4338ca;
+    background: #1A2332;
     color: #fff;
 }
 
@@ -342,5 +342,27 @@ export default {
 .btn-flat-secondary.btn-sm {
     padding: 6px 12px;
     font-size: 0.8rem;
+}
+
+/* ── Mobile Responsive ───────────────────────────── */
+@media (max-width: 575.98px) {
+    .page-wrap {
+        padding: 16px 0 48px;
+    }
+
+    .info-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+
+    .info-label {
+        width: auto;
+    }
+
+    .info-value {
+        width: 100%;
+        overflow-wrap: anywhere;
+    }
 }
 </style>

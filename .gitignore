@@ -8,7 +8,10 @@
 /vendor
 .env
 .env.backup
+.env.local
+.env.prod
 .env.production
+.env.*.local
 .phpactor.json
 .phpunit.result.cache
 Homestead.json
@@ -16,6 +19,11 @@ Homestead.yaml
 npm-debug.log
 yarn-error.log
 /auth.json
+/analyze_blip.py
+/generate_templates.php
+/test_import.php
+/*.docx
+/storage/framework/PsySH
 /.fleet
 /.idea
 /.nova

@@ -24,10 +24,13 @@ class ImageConverter
     public static function convertAndStore(
         string $binary,
         string $directory = 'question-images',
-        int $quality = 85
+        int $quality = 85,
+        int $maxDimension = 1600
     ): ?string {
         // TURUNKAN THRESHOLD DARI 100 KE 50 BYTES
-        if (!extension_loaded('gd') || strlen($binary) < 50) {
+        // Jika GD tidak ada ATAU GD tanpa dukungan WebP, biarkan pemanggil
+        // menyimpan gambar asli (jangan sampai fatal error 500).
+        if (!extension_loaded('gd') || !function_exists('imagewebp') || strlen($binary) < 50) {
             return null;
         }
 
@@ -40,7 +43,21 @@ class ImageConverter
         // Preserve transparency (PNG / GIF)
         $width  = imagesx($src);
         $height = imagesy($src);
-        $dst    = imagecreatetruecolor($width, $height);
+
+        // Downscale: batasi sisi terpanjang. Buffer GD sebesar W*H*4 byte per
+        // lapisan, jadi foto 4000x3000 memakan ~48MB hanya untuk 1 buffer.
+        // Membatasi ke 1600px memangkas memori & ukuran file WebP drastis
+        // tanpa mengurangi kualitas tampilan (soal ditampilkan kecil).
+        $maxDimension = max(1, (int) $maxDimension);
+        $scale = 1.0;
+        $longest = max($width, $height);
+        if ($longest > $maxDimension) {
+            $scale = $maxDimension / $longest;
+        }
+        $newW = max(1, (int) round($width * $scale));
+        $newH = max(1, (int) round($height * $scale));
+
+        $dst = imagecreatetruecolor($newW, $newH);
 
         // Fill background white (WebP lossy does not support transparency well at low quality)
         // For lossless-ish quality ≥ 80 with alpha, keep transparency
@@ -55,7 +72,11 @@ class ImageConverter
             imagefill($dst, 0, 0, $white);
         }
 
-        imagecopy($dst, $src, 0, 0, 0, 0, $width, $height);
+        if ($scale < 1.0) {
+            imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $width, $height);
+        } else {
+            imagecopy($dst, $src, 0, 0, 0, 0, $newW, $newH);
+        }
         imagedestroy($src);
 
         // Capture WebP output into a buffer
@@ -85,11 +106,12 @@ class ImageConverter
     public static function convertUploadedFile(
         $file,
         string $directory = 'question-images',
-        int $quality = 85
+        int $quality = 85,
+        int $maxDimension = 1600
     ): ?string {
         $binary = file_get_contents($file->getPathname());
         if (!$binary) return null;
 
-        return static::convertAndStore($binary, $directory, $quality);
+        return static::convertAndStore($binary, $directory, $quality, $maxDimension);
     }
 }

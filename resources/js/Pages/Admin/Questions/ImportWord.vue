@@ -56,21 +56,31 @@
 
                         <div class="alert alert-info">
                             <i class="fa fa-info-circle me-2"></i>
-                            <strong>Format yang didukung:</strong>
+                            <strong>Format yang didukung (paling konsisten):</strong>
                             <ul class="mt-2 mb-0">
                                 <li>
-                                    Sistem mendukung list otomatis bawaan Word (Auto-numbering / Bullets).
+                                    Soal memakai list otomatis bernomor:
+                                    <code>1. Berapa hasil 2 + 2?</code> (auto-numbering Word)
                                 </li>
                                 <li>
-                                    Jika tidak pakai list otomatis, format nomor harus diikuti titik:
-                                    <code>1. Apa ibu kota Indonesia?</code>
-                                </li>
-                                <li>
-                                    Pilihan A-E: <code>A. Jakarta</code>,
-                                    <code>B. Bandung</code>, dst
+                                    Opsi memakai sub-list otomatis berhuruf:
+                                    <code>a. 4</code>, <code>b. 5</code>,
+                                    <code>c. 6</code>, <code>d. 7</code>, <code>e. 8</code>
                                 </li>
                                 <li v-if="!isPersonality">
-                                    Jawaban ditandai dengan: <code>Jawaban: A</code> (dapat juga menggunakan Pembahasan).
+                                    Setelah opsi tulis
+                                    <code>Jawaban : A</code> lalu
+                                    <code>Pembahasan : ...</code>
+                                </li>
+                                <li v-else>
+                                    Setelah opsi tulis
+                                    <code>POIN : A=5|B=4|C=3|D=2|E=1</code>
+                                    (opsional, default 5,4,3,2,1)
+                                </li>
+                                <li>
+                                    <strong>Gunakan tombol
+                                    <i class="fa fa-file-word"></i> Download Template</strong>
+                                    di atas untuk format contoh yang pasti berhasil.
                                 </li>
                             </ul>
                         </div>
@@ -96,7 +106,7 @@
                                 <input
                                     type="file"
                                     class="form-control"
-                                    accept=".doc,.docx"
+                                    accept=".docx"
                                     ref="fileInput"
                                     @change="handleFileChange"
                                 />

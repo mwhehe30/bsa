@@ -1,5 +1,5 @@
 <template>
-    <Head :title="'Pilih Tipe - ' + exam.title" />
+    <Head :title="'Pilih Tipe - ' + exam.title + ' - Buweuk Sipit Academy'" />
 
     <div class="page-wrap">
         <div class="row justify-content-center">
@@ -170,8 +170,8 @@ const handleSelect = (type) => {
         title: 'Konfirmasi Pilihan',
         html: `
             <div style="text-align: center; margin: 20px 0;">
-                <i class="fas ${getTypeIcon(type)}" style="font-size: 3rem; color: #4f46e5; margin-bottom: 15px;"></i>
-                <h3 style="color: #4f46e5; margin-bottom: 10px;">${getTypeName(type)}</h3>
+                <i class="fas ${getTypeIcon(type)}" style="font-size: 3rem; color: #1A2332; margin-bottom: 15px;"></i>
+                <h3 style="color: #1A2332; margin-bottom: 10px;">${getTypeName(type)}</h3>
                 <p style="color: #dc3545; font-weight: bold;">
                     <i class="fas fa-exclamation-triangle"></i>
                     Yakin pilih tipe ${getTypeName(type)}?
@@ -181,7 +181,7 @@ const handleSelect = (type) => {
         `,
         icon: 'question',
         showCancelButton: true,
-        confirmButtonColor: '#4f46e5',
+        confirmButtonColor: '#1A2332',
         cancelButtonColor: '#6c757d',
         confirmButtonText: '<i class="fas fa-check me-2"></i>Ya, Mulai Ujian',
         cancelButtonText: 'Batal',
@@ -260,7 +260,7 @@ const getTypeName = (type) => {
     color: #1e293b;
 }
 
-.text-indigo { color: #4f46e5; }
+.text-indigo { color: #1A2332; }
 
 /* ── Badge & Title ─────────────────────────────── */
 .type-badge {
@@ -271,7 +271,7 @@ const getTypeName = (type) => {
     padding: 5px 14px;
     border-radius: 999px;
     background: #eef2ff;
-    color: #4f46e5;
+    color: #1A2332;
 }
 
 .exam-title {
@@ -344,7 +344,7 @@ const getTypeName = (type) => {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #4f46e5;
+    background: #1A2332;
 }
 
 /* ── Type Cards ────────────────────────────────── */
@@ -358,7 +358,7 @@ const getTypeName = (type) => {
 .type-card:hover {
     transform: translateY(-4px);
     box-shadow: 0 8px 16px -4px rgba(79, 70, 229, 0.15);
-    border-color: #a5b4fc;
+    border-color: #1A2332;
 }
 
 .type-icon {
@@ -368,7 +368,7 @@ const getTypeName = (type) => {
     align-items: center;
     justify-content: center;
     font-size: 1.5rem;
-    color: #4f46e5;
+    color: #1A2332;
     background: #eef2ff;
     border-radius: 50%;
     transition: all 0.2s ease;
@@ -376,7 +376,7 @@ const getTypeName = (type) => {
 
 .type-card:hover .type-icon {
     color: #ffffff;
-    background: #4f46e5;
+    background: #1A2332;
 }
 
 .type-name {

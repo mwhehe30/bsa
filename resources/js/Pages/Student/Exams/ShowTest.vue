@@ -291,7 +291,7 @@ const submitExam = () => {
         text: 'Apakah Anda yakin ingin men-submit semua jawaban?',
         icon: 'question',
         showCancelButton: true,
-        confirmButtonColor: '#4f46e5',
+        confirmButtonColor: '#1A2332',
         cancelButtonColor: '#94a3b8',
         confirmButtonText: 'Ya, Submit!',
         cancelButtonText: 'Batal',
@@ -301,7 +301,7 @@ const submitExam = () => {
                 title: 'Berhasil!',
                 text: `Semua ${totalQuestions} jawaban berhasil disimpan. (Demo)`,
                 icon: 'success',
-                confirmButtonColor: '#4f46e5',
+                confirmButtonColor: '#1A2332',
             });
         }
     });
@@ -359,7 +359,7 @@ onUnmounted(() => {
     align-items: center;
     justify-content: center;
     border-radius: 12px;
-    color: #4f46e5;
+    color: #1A2332;
     background: #eef2ff;
     font-size: 1.2rem;
 }
@@ -432,7 +432,7 @@ onUnmounted(() => {
 }
 
 .text-indigo {
-    color: #4f46e5;
+    color: #1A2332;
 }
 
 /* ── Badges ────────────────────────────────────── */
@@ -447,7 +447,7 @@ onUnmounted(() => {
 
 .badge-indigo {
     background: #e0e7ff;
-    color: #4f46e5;
+    color: #1A2332;
 }
 
 .badge-green {
@@ -490,13 +490,13 @@ onUnmounted(() => {
 }
 
 .option-btn:hover {
-    border-color: #a5b4fc;
+    border-color: #1A2332;
     background: #f8fafc;
     transform: translateX(2px);
 }
 
 .option-btn-selected {
-    border-color: #4f46e5;
+    border-color: #1A2332;
     background: #eef2ff;
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
 }
@@ -511,13 +511,13 @@ onUnmounted(() => {
     border-radius: 8px;
     font-weight: 700;
     font-size: 0.85rem;
-    color: #4f46e5;
+    color: #1A2332;
     background: #eef2ff;
 }
 
 .option-btn-selected .option-letter {
     color: #ffffff;
-    background: #4f46e5;
+    background: #1A2332;
 }
 
 .option-text {
@@ -542,14 +542,14 @@ onUnmounted(() => {
 }
 
 .grid-btn-answered {
-    background-color: #4f46e5;
+    background-color: #1A2332;
     color: #ffffff;
-    border-color: #4f46e5;
+    border-color: #1A2332;
 }
 
 .grid-btn-active {
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.35);
-    border-color: #4f46e5;
+    border-color: #1A2332;
     font-weight: 800;
 }
 
@@ -573,12 +573,12 @@ onUnmounted(() => {
 }
 
 .btn-flat-primary {
-    background: #4f46e5;
+    background: #1A2332;
     color: #fff;
 }
 
 .btn-flat-primary:hover:not(:disabled) {
-    background: #4338ca;
+    background: #1A2332;
     color: #fff;
 }
 
@@ -652,7 +652,7 @@ onUnmounted(() => {
 }
 
 .sheet-search-wrap:focus-within {
-    border-color: #4f46e5;
+    border-color: #1A2332;
     background: #ffffff;
 }
 

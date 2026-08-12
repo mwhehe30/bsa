@@ -318,6 +318,7 @@ server {
 | Push ke GitHub ditolak "contains secrets" | Ada token/secret ter-commit | Hapus secret dari commit, amend: `git add -A && git commit --amend --no-edit` |
 | Email gagal `550 Sending from domain X is not allowed` | `MAIL_PASSWORD` dari akun yang tidak punya domain X, atau domain belum verified / compliance belum selesai | Ambil token dari **Email Sending → Sending Domains → domain → Integration**, pastikan status **Verified** + compliance selesai |
 | Email gagal `550` / kredensial ditolak | Token `MAIL_PASSWORD` salah atau salah akun | Salin ulang token dari halaman Integration domain yang benar |
+| Semua POST ditolak `419 CSRF token mismatch` saat ujian (kecermatan/reguler) | Halaman HTML di-cache CDN/proxy sehingga CSRF token di meta tag basi, atau setting session `.env` salah | 1) Pastikan header `cf-cache-status` pada halaman ujian **bukan** `HIT` (disable cache HTML di Cloudflare). 2) Cek `.env` produksi: `SESSION_DRIVER=database`, `SESSION_DOMAIN` kosong, `SESSION_SECURE_COOKIE=true` hanya jika akses via HTTPS. 3) Setelah ubah `.env`, jalankan `php artisan config:clear && php artisan config:cache`. |
 
 ---
 

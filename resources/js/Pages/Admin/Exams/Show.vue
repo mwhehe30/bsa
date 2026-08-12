@@ -2,88 +2,44 @@
     <Head>
         <title>Detail Ujian - Buweuk Sipit Academy</title>
     </Head>
-    <div class="container-fluid mt-5 mb-5">
+    <div class="container-fluid mt-5 mb-5 admin-exam-detail">
         <div class="row">
             <div class="col-md-12">
-                <Link
-                    href="/admin/exams"
-                    class="btn btn-md btn-primary mb-3 border-0 shadow"
-                    type="button"
-                    ><i class="fa fa-chevron-left me-2"></i> Kembali</Link
-                >
+                <div class="mb-3">
+                    <Link href="/admin/exams" class="btn btn-primary border-0 shadow-sm">
+                        <i class="fa fa-chevron-left me-2"></i>Kembali
+                    </Link>
+                </div>
 
                 <div class="card mb-4 border-0 shadow">
+                    <div class="card-header">
+                        <h2 class="h6 fw-bold"><i class="fa fa-info-circle me-2 text-primary"></i>Informasi Ujian</h2>
+                    </div>
                     <div class="card-body">
-                        <h5><i class="fa fa-edit"></i> Detail Ujian</h5>
-                        <hr />
-                        <div class="table-responsive">
-                            <table
-                                class="table-bordered table-centered table-nowrap mb-0 table rounded"
-                            >
+                        <div class="table-responsive exam-info-wrap">
+                            <table class="table exam-info-table mb-0">
                                 <tbody>
+                                    <tr><th>Nama Ujian</th><td>{{ exam.title }}</td></tr>
                                     <tr>
-                                        <td
-                                            style="width: 30%"
-                                            class="fw-bold"
-                                        >
-                                            Nama Ujian
-                                        </td>
-                                        <td>{{ exam.title }}</td>
-                                    </tr>
-                                    <tr>
-                                        <td class="fw-bold">Tipe</td>
+                                        <th>Tipe</th>
                                         <td>
-                                            <span
-                                                v-if="isPersonality"
-                                                class="badge bg-info"
-                                                >Kepribadian</span
-                                            >
-                                            <span
-                                                v-else
-                                                class="badge bg-primary"
-                                                >Pilihan Ganda</span
-                                            >
+                                            <span v-if="isPersonality" class="badge bg-info">Kepribadian</span>
+                                            <span v-else class="badge bg-primary">Pilihan Ganda</span>
                                         </td>
                                     </tr>
                                     <tr>
-                                        <td class="fw-bold">Kategori</td>
+                                        <th>Kategori</th>
                                         <td>
-                                            <span
-                                                v-if="
-                                                    exam.lesson.category ===
-                                                    'psikologi'
-                                                "
-                                                class="badge bg-primary"
-                                                >Psikologi</span
-                                            >
-                                            <span
-                                                v-else
-                                                class="badge bg-success"
-                                                >Akademik</span
-                                            >
+                                            <span v-if="exam.lesson.category === 'psikologi'" class="badge bg-primary">Psikologi</span>
+                                            <span v-else class="badge bg-success">Akademik</span>
                                         </td>
                                     </tr>
+                                    <tr><th>Mata Pelajaran</th><td>{{ exam.lesson.name }}</td></tr>
                                     <tr>
-                                        <td class="fw-bold">Mata Pelajaran</td>
-                                        <td>{{ exam.lesson.name }}</td>
+                                        <th>Jumlah Soal</th>
+                                        <td>{{ exam.questions_total || exam.questions?.data?.length || 0 }} Soal</td>
                                     </tr>
-                                    <tr>
-                                        <td class="fw-bold">Jumlah Soal</td>
-                                        <td>
-                                            <span class="badge bg-primary fs-6">
-                                                {{
-                                                    exam.questions_total ||
-                                                    exam.questions?.data
-                                                        ?.length ||
-                                                    0
-                                                }}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td class="fw-bold">Durasi (Menit)</td>
-                                        <td>{{ exam.duration }} Menit</td>
-                                    </tr>
+                                    <tr><th>Durasi</th><td>{{ exam.duration }} Menit</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -95,7 +51,7 @@
                         <div
                             class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2"
                         >
-                            <h5 class="mb-0">
+                            <h2 class="h5 mb-0">
                                 <i class="fa fa-question-circle"></i> Soal Ujian
                                 <span class="badge bg-secondary ms-2">
                                     Total:
@@ -106,8 +62,8 @@
                                     }}
                                     soal
                                 </span>
-                            </h5>
-                            <div v-if="!exam.is_kecermatan" class="d-flex flex-wrap gap-2">
+                            </h2>
+                            <div v-if="!exam.is_kecermatan" class="question-actions d-flex flex-wrap gap-2">
                                 <Link
                                     :href="`/admin/exams/${exam.id}/questions/create`"
                                     class="btn btn-sm btn-primary border-0 shadow"
@@ -317,7 +273,7 @@
 
                         <div class="table-responsive mt-3">
                             <table
-                                class="table-bordered table-centered table-nowrap mb-0 table rounded"
+                                class="questions-table table-bordered table-centered mb-0 table rounded"
                             >
                                 <thead class="thead-dark">
                                     <tr class="border-0">
@@ -343,14 +299,13 @@
                                         </th>
                                     </tr>
                                 </thead>
-                                <div class="mt-2"></div>
                                 <tbody>
                                     <tr
                                         v-for="(question, index) in exam
                                             .questions.data"
                                         :key="index"
                                     >
-                                        <td class="fw-bold text-center">
+                                        <td class="question-number fw-bold text-center" data-label="No. Soal">
                                             {{
                                                 ++index +
                                                 (exam.questions.current_page -
@@ -358,7 +313,7 @@
                                                     exam.questions.per_page
                                             }}
                                         </td>
-                                        <td>
+                                        <td class="question-content" data-label="Soal">
                                             <div
                                                 class="fw-bold"
                                                 v-html="sanitize(question.question)"
@@ -404,7 +359,7 @@
                                                 ></li>
                                             </ol>
                                         </td>
-                                        <td v-if="isPersonality">
+                                        <td v-if="isPersonality" data-label="Point">
                                             <div class="small">
                                                 <span
                                                     class="badge bg-primary me-1"
@@ -436,7 +391,7 @@
                                                 >
                                             </div>
                                         </td>
-                                        <td class="text-center">
+                                        <td class="question-row-actions text-center" data-label="Aksi">
                                             <!-- Hide edit/delete untuk kecermatan -->
                                             <template v-if="exam.is_kecermatan">
                                                 <span class="badge bg-secondary">
@@ -620,3 +575,135 @@ export default {
     },
 };
 </script>
+
+<style scoped>
+.exam-info-wrap {
+    border: 0;
+}
+
+.exam-info-table {
+    min-width: 0;
+}
+
+.exam-info-table th {
+    width: 190px;
+    color: #64748b;
+    font-weight: 600;
+}
+
+.exam-info-table th,
+.exam-info-table td {
+    padding: 0.75rem 0.5rem !important;
+    background: transparent !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+.exam-info-table tr:last-child th,
+.exam-info-table tr:last-child td {
+    border-bottom: 0 !important;
+}
+
+.question-content {
+    min-width: 420px;
+    white-space: normal;
+}
+
+.question-content :deep(img) {
+    height: auto;
+    max-width: 100%;
+}
+
+.question-content ol {
+    padding-left: 1.5rem;
+}
+
+.question-actions .btn {
+    min-height: 40px;
+    padding: 0.625rem 0.875rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    line-height: 1;
+    text-align: center;
+}
+
+.question-actions .btn i {
+    margin: 0;
+    line-height: 1;
+}
+
+@media (max-width: 767.98px) {
+    .exam-info-table th {
+        width: 42%;
+    }
+
+    .question-actions,
+    .question-actions .btn {
+        width: 100%;
+    }
+
+    .questions-table,
+    .questions-table tbody,
+    .questions-table tr,
+    .questions-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .questions-table {
+        min-width: 0 !important;
+    }
+
+    .questions-table thead {
+        display: none;
+    }
+
+    .questions-table tbody {
+        padding: 0.75rem;
+        background: #f8fafc;
+    }
+
+    .questions-table tbody tr {
+        margin-bottom: 0.875rem;
+        overflow: hidden;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+    }
+
+    .questions-table tbody tr:last-child {
+        margin-bottom: 0;
+    }
+
+    .questions-table tbody td {
+        min-width: 0;
+        padding: 0.875rem !important;
+        white-space: normal;
+        border: 0;
+        border-bottom: 1px solid #e2e8f0;
+    }
+
+    .questions-table tbody td:last-child {
+        border-bottom: 0;
+    }
+
+    .question-number {
+        text-align: left !important;
+        color: #64748b;
+    }
+
+    .question-row-actions {
+        display: flex !important;
+        gap: 0.5rem;
+        text-align: left !important;
+    }
+
+    .question-row-actions .btn {
+        flex: 1;
+    }
+}
+</style>

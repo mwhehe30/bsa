@@ -6,6 +6,7 @@ use App\Models\Exam;
 use App\Models\Grade;
 use App\Models\KecermatanExam;
 use App\Models\ExamGroup;
+use App\Models\Lesson;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -224,6 +225,10 @@ class DashboardController extends Controller
 
         return inertia('Student/Dashboard/Index', [
             'available_exams' => $availableExams,
+            'lessons' => Lesson::active()
+                ->orderBy('order')
+                ->orderBy('name')
+                ->get(['id', 'name', 'thumbnail']),
         ]);
     }
 

@@ -121,7 +121,7 @@
                                 <th class="text-center py-3">BENAR</th>
                                 <th class="text-center py-3">SALAH</th>
                                 <th class="text-center py-3">TIDAK DIJAWAB</th>
-                                <th class="text-center py-3">WAKTU (DETIK)</th>
+                                <th class="text-center py-3">WAKTU PENGERJAAN</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -130,16 +130,16 @@
                                 <td class="text-center fw-bold text-success">+{{ detail.correct }}</td>
                                 <td class="text-center fw-bold text-danger">{{ detail.wrong }}</td>
                                 <td class="text-center text-muted">{{ detail.unanswered }}</td>
-                                <td class="text-center font-monospace text-muted">{{ detail.time_spent }}s</td>
+                                <td class="text-center font-monospace text-muted">{{ formatColumnDuration(detail.time_spent) }}</td>
                             </tr>
                         </tbody>
                         <tfoot>
-                            <tr class="table-light fw-bold">
+                            <tr class="table-light fw-bold result-total-row">
                                 <td class="text-center">TOTAL</td>
                                 <td class="text-center text-success">+{{ session.total_correct }}</td>
                                 <td class="text-center text-danger">{{ session.total_wrong }}</td>
-                                <td class="text-center text-muted">{{ calculatedUnanswered }}</td>
-                                <td class="text-center font-monospace">{{ session.duration || '-' }}s</td>
+                                <td class="text-center">{{ calculatedUnanswered }}</td>
+                                <td class="text-center font-monospace">{{ formatColumnDuration(totalColumnDuration) }}</td>
                             </tr>
                         </tfoot>
                     </table>
@@ -219,6 +219,19 @@ export default {
         const unansweredPercentage = computed(() =>
             Math.round((calculatedUnanswered.value / 500) * 100)
         );
+        const totalColumnDuration = computed(() =>
+            props.columnDetails.reduce((total, detail) => total + Number(detail.time_spent || 0), 0)
+        );
+        const formatColumnDuration = (seconds) => {
+            const safeSeconds = Math.max(0, Number(seconds) || 0);
+            if (safeSeconds < 60) return `${safeSeconds} detik`;
+
+            const minutes = Math.floor(safeSeconds / 60);
+            const remainder = safeSeconds % 60;
+            return remainder > 0
+                ? `${minutes} menit ${remainder} detik`
+                : `${minutes} menit`;
+        };
 
         const printPage = () => {
             window.print();
@@ -289,6 +302,8 @@ export default {
             correctPercentage,
             wrongPercentage,
             unansweredPercentage,
+            totalColumnDuration,
+            formatColumnDuration,
             printPage,
         };
     },
@@ -296,6 +311,15 @@ export default {
 </script>
 
 <style>
+.result-total-row td:not(.text-success):not(.text-danger) {
+    color: #1A2332 !important;
+}
+
+.result-total-row td {
+    background-color: #F1F5F9 !important;
+    border-bottom: 0 !important;
+}
+
 @media print {
     /* Sembunyikan semua elemen navigasi saat print */
     nav,

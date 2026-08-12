@@ -11,7 +11,7 @@
                 </h4>
                 <p class="text-muted small mb-0">{{ exam.title }}</p>
             </div>
-            <Link href="/admin/kecermatan" class="btn btn-outline-secondary btn-sm">
+            <Link href="/admin/kecermatan" class="btn btn-primary btn-sm border-0 shadow-sm">
                 <i class="fa fa-arrow-left me-1"></i> Kembali ke Daftar Kecermatan
             </Link>
         </div>

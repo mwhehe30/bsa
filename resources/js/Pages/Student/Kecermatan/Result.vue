@@ -72,7 +72,7 @@
                             </h5>
                             <div class="d-flex align-items-center gap-3">
                                 <div class="d-flex align-items-center gap-1">
-                                    <span class="dot bg-indigo"></span>
+                                    <span class="dot chart-dot-correct"></span>
                                     <span class="small-text">Benar</span>
                                 </div>
                                 <div class="d-flex align-items-center gap-1">
@@ -104,7 +104,7 @@
                                             <th class="text-center">BENAR</th>
                                             <th class="text-center">SALAH</th>
                                             <th class="text-center">TIDAK DIJAWAB</th>
-                                            <th class="text-center">WAKTU (DETIK)</th>
+                                            <th class="text-center">WAKTU PENGERJAAN</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -121,7 +121,7 @@
                                             <td class="text-center">
                                                 <span class="flat-badge badge-gray">{{ detail.unanswered }}</span>
                                             </td>
-                                            <td class="text-center font-monospace">{{ detail.time_spent }}s</td>
+                                            <td class="text-center font-monospace">{{ formatColumnDuration(detail.time_spent) }}</td>
                                         </tr>
                                     </tbody>
                                     <tfoot>
@@ -130,7 +130,7 @@
                                             <td class="text-center text-indigo fw-bold">+{{ session.total_correct }}</td>
                                             <td class="text-center text-red fw-bold">{{ session.total_wrong }}</td>
                                             <td class="text-center text-muted fw-bold">{{ calculatedUnanswered }}</td>
-                                            <td class="text-center font-monospace fw-bold">{{ session.duration || 600 }}s</td>
+                                            <td class="text-center font-monospace fw-bold">{{ formatColumnDuration(totalColumnDuration) }}</td>
                                         </tr>
                                     </tfoot>
                                 </table>
@@ -172,6 +172,21 @@ export default {
             return Math.round(((props.session.total_correct || 0) / 500) * 100);
         });
 
+        const totalColumnDuration = computed(() =>
+            props.columnDetails.reduce((total, detail) => total + Number(detail.time_spent || 0), 0)
+        );
+
+        const formatColumnDuration = (seconds) => {
+            const safeSeconds = Math.max(0, Number(seconds) || 0);
+            if (safeSeconds < 60) return `${safeSeconds} detik`;
+
+            const minutes = Math.floor(safeSeconds / 60);
+            const remainder = safeSeconds % 60;
+            return remainder > 0
+                ? `${minutes} menit ${remainder} detik`
+                : `${minutes} menit`;
+        };
+
         onMounted(() => {
             if (!chartCanvas.value) return;
 
@@ -183,7 +198,7 @@ export default {
                         {
                             label: 'Benar',
                             data: props.chartData.correct,
-                            borderColor: '#4f46e5',
+                            borderColor: '#4F46E5',
                             backgroundColor: 'rgba(79, 70, 229, 0.1)',
                             tension: 0.3,
                             fill: true,
@@ -245,6 +260,8 @@ export default {
             chartCanvas,
             calculatedUnanswered,
             correctPercentage,
+            totalColumnDuration,
+            formatColumnDuration,
         };
     },
 };
@@ -276,7 +293,7 @@ export default {
     color: #1e293b;
 }
 
-.text-indigo { color: #4f46e5; }
+.text-indigo { color: #1A2332; }
 .text-green { color: #16a34a; }
 .text-red { color: #dc2626; }
 
@@ -287,7 +304,8 @@ export default {
     display: inline-block;
 }
 
-.bg-indigo { background-color: #4f46e5; }
+.bg-indigo { background-color: #1A2332; }
+.chart-dot-correct { background-color: #4F46E5; }
 .bg-red { background-color: #ef4444; }
 
 .small-text {
@@ -339,7 +357,7 @@ export default {
 
 .badge-indigo {
     background: #e0e7ff;
-    color: #4f46e5;
+    color: #1A2332;
 }
 
 .badge-green {
@@ -410,12 +428,12 @@ export default {
 }
 
 .btn-flat-primary {
-    background: #4f46e5;
+    background: #1A2332;
     color: #fff;
 }
 
 .btn-flat-primary:hover {
-    background: #4338ca;
+    background: #1A2332;
     color: #fff;
 }
 
@@ -437,7 +455,7 @@ export default {
 /* ── Mobile Responsive ───────────────────────────── */
 @media (max-width: 576px) {
     .page-wrap {
-        padding: 10px 0 24px;
+        padding: 16px 0 48px;
     }
 
     .flat-card {

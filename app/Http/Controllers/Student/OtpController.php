@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Student;
 
+use App\Helpers\TimeNoticeMessage;
 use App\Http\Controllers\Controller;
 use App\Models\Student;
 use Illuminate\Http\Request;
@@ -22,7 +23,10 @@ class OtpController extends Controller
         if (RateLimiter::tooManyAttempts($ipKey, 10)) {
             $seconds = RateLimiter::availableIn($ipKey);
             return redirect()->back()->withErrors([
-                'email' => "Terlalu banyak permintaan dari IP Anda. Silakan coba lagi dalam {$seconds} detik."
+                'email' => TimeNoticeMessage::retryAt(
+                    'Terlalu banyak permintaan dari IP Anda',
+                    $seconds,
+                ),
             ]);
         }
         RateLimiter::hit($ipKey, 300); // 5 minutes
@@ -30,6 +34,11 @@ class OtpController extends Controller
         $request->validate([
             'email' => 'required|email|exists:students,email',
             'password' => 'required',
+        ], [
+            'email.required' => 'Email wajib diisi.',
+            'email.email'    => 'Format email tidak valid.',
+            'email.exists'   => 'Email tidak ditemukan.',
+            'password.required' => 'Password wajib diisi.',
         ]);
 
         // Layer 2: Rate limit per email (prevent spam to specific user)
@@ -37,7 +46,10 @@ class OtpController extends Controller
         if (RateLimiter::tooManyAttempts($emailKey, 3)) {
             $seconds = RateLimiter::availableIn($emailKey);
             return redirect()->back()->withErrors([
-                'email' => "Terlalu banyak permintaan OTP untuk email ini. Silakan coba lagi dalam {$seconds} detik."
+                'email' => TimeNoticeMessage::retryAt(
+                    'Terlalu banyak permintaan OTP untuk email ini',
+                    $seconds,
+                ),
             ]);
         }
 
@@ -56,8 +68,11 @@ class OtpController extends Controller
 
         // Layer 3: Check if OTP is still valid (prevent unnecessary email sends)
         if ($student->otp_expired && now()->lt($student->otp_expired)) {
-            $remainingSeconds = now()->diffInSeconds($student->otp_expired);
-            return redirect()->back()->with('info', "Kode OTP masih valid untuk {$remainingSeconds} detik. Silakan cek email Anda.");
+            $remainingSeconds = (int) max(0, now()->diffInSeconds($student->otp_expired));
+            return redirect()->back()->with('info', TimeNoticeMessage::validUntil(
+                'Kode OTP masih berlaku',
+                $remainingSeconds,
+            ) . ' Silakan cek email Anda.');
         }
 
         $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);

@@ -14,7 +14,7 @@
                 </p>
             </div>
             <div class="col-md-4 text-md-end mt-2 mt-md-0 d-flex justify-content-md-end gap-2">
-                <Link href="/admin/reports/students" class="btn btn-secondary shadow border-0">
+                <Link href="/admin/reports/students" class="btn btn-primary shadow border-0">
                     <i class="fa fa-arrow-left"></i> Kembali
                 </Link>
                 <a

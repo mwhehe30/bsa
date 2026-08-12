@@ -187,7 +187,7 @@ export default {
     color: #1e293b;
 }
 
-.text-indigo { color: #4f46e5; }
+.text-indigo { color: #1A2332; }
 
 /* ── Badge & Title ─────────────────────────────── */
 .type-badge {
@@ -198,7 +198,7 @@ export default {
     padding: 5px 14px;
     border-radius: 999px;
     background: #eef2ff;
-    color: #4f46e5;
+    color: #1A2332;
 }
 
 .type-badge-info {
@@ -276,7 +276,7 @@ export default {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #4f46e5;
+    background: #1A2332;
 }
 
 /* ── Alerts ────────────────────────────────────── */
@@ -307,12 +307,12 @@ export default {
 }
 
 .btn-flat-primary {
-    background: #4f46e5;
+    background: #1A2332;
     color: #fff;
 }
 
 .btn-flat-primary:hover {
-    background: #4338ca;
+    background: #1A2332;
     color: #fff;
 }
 

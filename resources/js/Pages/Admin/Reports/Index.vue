@@ -86,7 +86,6 @@
                                         <th class="rounded-end border-0 text-center">Aksi</th>
                                     </tr>
                                 </thead>
-                                <div class="mt-2"></div>
                                 <tbody>
                                     <!-- Baris kosong jika tidak ada data sama sekali -->
                                     <tr v-if="grades.data?.length === 0 && (!kecermatanSessions || kecermatanSessions.data?.length === 0)">

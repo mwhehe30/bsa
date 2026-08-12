@@ -110,11 +110,23 @@ class StudentController extends Controller
 
     public function storeImport(Request $request)
     {
+        // Ekstensi dicek manual (bukan rule mimes) agar tidak bergantung pada
+        // ekstensi fileinfo di server (sumber error 500 di VPS).
         $request->validate([
-            'file' => 'required|mimes:csv,xls,xlsx',
+            'file' => 'required|file|max:20480', // maks 20 MB
         ]);
 
-        Excel::import(new StudentsImport(), $request->file('file'));
+        $extension = strtolower($request->file('file')->getClientOriginalExtension());
+        if (!in_array($extension, ['csv', 'xls', 'xlsx'])) {
+            return redirect()->back()->with('error', 'File harus berupa Excel (.xlsx, .xls, atau .csv).');
+        }
+
+        try {
+            Excel::import(new StudentsImport(), $request->file('file'));
+        } catch (\Throwable $e) {
+            \Log::error('Import siswa gagal: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Gagal mengimport file siswa: ' . $e->getMessage());
+        }
 
         return redirect()->route('admin.students.index');
     }
@@ -152,12 +164,12 @@ class StudentController extends Controller
                 }
             }
 
-            // Also unblock kecermatan_sessions and reset column_start_time for student
+            // Also unblock kecermatan_sessions WITHOUT resetting column_start_time,
+            // agar timer kolom melanjutkan sisa waktunya (tidak reset ke 60 detik).
             \App\Models\KecermatanSession::where('student_id', $student->id)
                 ->where('is_blocked', true)
                 ->update([
                     'is_blocked' => false,
-                    'column_start_time' => now(),
                 ]);
         }
 
@@ -222,12 +234,12 @@ class StudentController extends Controller
             }
         }
 
-        // Also unblock kecermatan_sessions and reset column_start_time
+        // Also unblock kecermatan_sessions WITHOUT resetting column_start_time,
+        // agar timer kolom melanjutkan sisa waktunya (tidak reset ke 60 detik).
         \App\Models\KecermatanSession::whereIn('student_id', $request->student_ids)
             ->where('is_blocked', true)
             ->update([
                 'is_blocked' => false,
-                'column_start_time' => now(),
             ]);
 
         $count = count($request->student_ids);

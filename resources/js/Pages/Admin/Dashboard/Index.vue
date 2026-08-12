@@ -3,8 +3,12 @@
         <title>Dashboard - Buweuk Sipit Academy</title>
     </Head>
     <div class="container-fluid mt-5 mb-5">
+        <div class="admin-page-heading mb-4">
+            <h1 class="h4 fw-bold mb-1">Dashboard</h1>
+            <p class="text-muted mb-0">Ringkasan data Buweuk Sipit Academy</p>
+        </div>
         <div class="row">
-            <div class="col-12 col-sm-6 col-xl-4 mb-4">
+            <div class="col-12 col-sm-6 col-xl-6 mb-4">
                 <div class="card border-0 shadow">
                     <div class="card-body">
                         <div class="row d-block d-xl-flex align-items-center">
@@ -52,7 +56,7 @@
                 </div>
             </div>
 
-            <div class="col-12 col-sm-6 col-xl-4 mb-4">
+            <div class="col-12 col-sm-6 col-xl-6 mb-4">
                 <div class="card border-0 shadow">
                     <div class="card-body">
                         <div class="row d-block d-xl-flex align-items-center">

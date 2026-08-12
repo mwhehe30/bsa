@@ -14,6 +14,10 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->web(append: [
             \App\Http\Middleware\HandleInertiaRequests::class,
+            // Semua halaman (termasuk login publik) dilarang di-cache CDN/proxy
+            // agar CSRF token & cookie sesi tidak pernah basi. Ini juga
+            // melindungi route login dari bug 419 yang sama seperti ujian.
+            \App\Http\Middleware\PreventPageCache::class,
         ]);
         $middleware->alias([
             'student' => \App\Http\Middleware\AuthStudent::class,

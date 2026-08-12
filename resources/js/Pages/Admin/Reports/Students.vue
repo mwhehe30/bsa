@@ -24,7 +24,7 @@
             </div>
             
             <div class="col-md-4 text-end">
-                <Link href="/admin/reports" class="btn btn-secondary shadow border-0 me-2" type="button">
+                <Link href="/admin/reports" class="btn btn-primary shadow border-0 me-2" type="button">
                     <i class="fa fa-arrow-left"></i> Kembali ke Nilai
                 </Link>
                 <a 

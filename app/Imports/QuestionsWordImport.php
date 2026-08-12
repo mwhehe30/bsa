@@ -4,7 +4,14 @@ namespace App\Imports;
 use App\Helpers\ImageConverter;
 use App\Models\Question;
 use Illuminate\Http\UploadedFile;
+use PhpOffice\PhpWord\Element\Image;
+use PhpOffice\PhpWord\Element\ListItem;
+use PhpOffice\PhpWord\Element\ListItemRun;
+use PhpOffice\PhpWord\Element\Table;
+use PhpOffice\PhpWord\Element\TextRun;
+use PhpOffice\PhpWord\Element\Title;
 use PhpOffice\PhpWord\IOFactory;
+use PhpOffice\PhpWord\Shared\ZipArchive;
 use Illuminate\Support\Facades\Log;
 
 class QuestionsWordImport
@@ -14,6 +21,20 @@ class QuestionsWordImport
     protected $imgCounter = 1;
     protected $undetectedAnswers = [];
     protected $personalityPoints = [];
+
+    /**
+     * Format template (soal = list bernomor 1,2,3 + opsi = sub-list a,b,c,d,e)
+     * menjadi prioritas. Aktif otomatis saat dokumen memakai struktur list
+     * (ada list item depth-0 DAN depth-1). Saat aktif, paragraf biasa bernomor
+     * ("1. langkah pertama...") di dalam pembahasan TIDAK dianggap soal baru
+     * — soal hanya dari list item. Fallback tetap berjalan untuk dokumen yang
+     * tidak memakai struktur list sama sekali.
+     */
+    protected $templateMode = false;
+
+    /** Namespace OOXML main (w) — dipakai untuk menulis node XML */
+    const NS_W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const NS_MC = 'http://schemas.openxmlformats.org/markup-compatibility/2006';
 
     // Mapping jawaban teks ke huruf
     protected $textAnswerMap = [
@@ -33,8 +54,20 @@ class QuestionsWordImport
 
     public function import(UploadedFile $file)
     {
+        $preprocessedPath = null;
         try {
-            $phpWord = IOFactory::load($file->getPathname());
+            // Beberapa file .docx (mis. hasil konversi) menaruh gambar di dalam
+            // blok <mc:AlternateContent>. PHPWord mengabaikan blok tsb, sehingga
+            // gambar hilang. Di sini kita "unwrap" blok tsb menjadi <w:r> biasa
+            // sebelum dibaca PHPWord.
+            $preprocessedPath = $this->preprocessDocx($file->getPathname());
+            $phpWord = IOFactory::load($preprocessedPath);
+
+            // Deteksi format template SEBELUM parsing: dokumen yang memakai
+            // struktur list (soal depth-0 + opsi depth-1) diproses dengan mode
+            // terstruktur sebagai prioritas.
+            $this->templateMode = $this->detectTemplateMode($phpWord);
+
             $questions = [];
             $current = null;
             $seqOptIdx = 0;
@@ -44,34 +77,96 @@ class QuestionsWordImport
             $hasOptions = false;
             $questionNumber = 0;
             $pendingImages = [];
-            $lastElementClass = null; // Track element class untuk context
+            $answerFound = false;      // Jawaban sudah ditemukan untuk soal berjalan
+            $isTableQuestion = false;  // Soal dibuat dari tabel (opsi lanjutan pendek)
 
             foreach ($phpWord->getSections() as $section) {
                 foreach ($section->getElements() as $element) {
-                    $elementClass = basename(str_replace('\\', '/', get_class($element)));
-                    
-                    // 1. EKSTRAK GAMBAR DARI SEMUA ELEMEN (TERMASUK TABEL)
+                    // 1. EKSTRAK GAMBAR DARI SEMUA ELEMEN (TERMASUK TABEL & TITLE)
                     $images = [];
                     $this->extractImages($element, $images);
 
-                    // 2. EKSTRAK TEKS DARI SEMUA ELEMEN (TERMASUK TABEL)
+                    // 2. EKSTRAK TEKS DARI SEMUA ELEMEN (TERMASUK TABEL & TITLE)
                     $text = $this->getElemText($element);
 
-                    // Cek apakah ini adalah ListItem (Soal atau Opsi ber-nomor)
-                    if ($element instanceof \PhpOffice\PhpWord\Element\ListItemRun
-                        || $element instanceof \PhpOffice\PhpWord\Element\ListItem) {
+                    // 3. TABEL: bisa berisi opsi, pembahasan, atau soal itu sendiri
+                    if ($element instanceof Table) {
+                        $this->handleTable(
+                            $element,
+                            $current,
+                            $questions,
+                            $explanationText,
+                            $hasOptions,
+                            $seqOptIdx,
+                            $optMap,
+                            $questionNumber,
+                            $prevWasQuestion,
+                            $answerFound,
+                            $isTableQuestion,
+                            $pendingImages
+                        );
 
+                        // Gambar di dalam tabel -> bagian pembahasan
+                        if (!empty($images) && $current !== null) {
+                            foreach ($images as $img) {
+                                $url = $this->saveImage($img);
+                                if ($url) {
+                                    $explanationText .= ' <img src="' . $url . '" style="max-width:100%;height:auto">';
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    // 4. LIST ITEM: soal (depth 0) atau opsi (depth >= 1)
+                    if ($element instanceof ListItemRun || $element instanceof ListItem) {
                         $depth = method_exists($element, 'getDepth') ? $element->getDepth() : 0;
 
                         if ($depth == 0) {
+                            $trimmedQuestion = trim($text);
+
+                            // List item kosong di tengah dokumen = pemisah, bukan
+                            // pertanyaan baru. Lewati agar tidak mengganggu status.
+                            if ($trimmedQuestion === '') {
+                                continue;
+                            }
+
+                            // Item list angka pendek ("1 7", "1", "23") di tengah
+                            // dokumen adalah sisa diagram/penomoran, bukan soal.
+                            // Lewati agar tidak jadi pertanyaan sampah.
+                            if (
+                                $current !== null
+                                && mb_strlen($trimmedQuestion) <= 5
+                                && preg_match('/^[\d\s.]+$/', $trimmedQuestion)
+                            ) {
+                                continue;
+                            }
+
+                            // Kasus khusus: soal yang dibuat dari tabel + opsi lanjutan
+                            // berupa list pendek (mis. "enke, dahga, danga").
+                            if (
+                                $isTableQuestion
+                                && $current !== null
+                                && $current['answer'] === null
+                                && mb_strlen($trimmedQuestion) < 12
+                            ) {
+                                $prevWasQuestion = false;
+                                $hasOptions = true;
+                                $this->extractAnswerFromText($current, $text);
+                                $this->parseOptionLine($this->cleanOptionText($text), $current['options'], $optMap, $seqOptIdx);
+                                // Matikan mode ini setelah 5 opsi terisi, agar soal
+                                // pendek berikutnya tidak ikut tertelan jadi opsi.
+                                if (count(array_filter($current['options'])) >= 5) {
+                                    $isTableQuestion = false;
+                                }
+                                continue;
+                            }
+
                             // Simpan pertanyaan sebelumnya
                             if ($current !== null) {
-                                $this->attachPendingImages($current, $pendingImages, $prevWasQuestion, $hasOptions, $seqOptIdx, $optMap);
-                                $pendingImages = [];
-                                $current['explanation'] = $explanationText;
-                                if ($current['answer'] === null) $this->extractAnswerFromExplanation($current);
-                                $questions[] = $current;
+                                $this->finalizeQuestion($current, $questions, $explanationText, $pendingImages, $hasOptions, $seqOptIdx, $optMap);
                                 $explanationText = '';
+                                $pendingImages = [];
                                 $hasOptions = false;
                             }
 
@@ -82,131 +177,166 @@ class QuestionsWordImport
                                 'answer' => null,
                                 'question_number' => $questionNumber,
                             ];
-                            
-                            // Handle images di ListItem depth=0 (soal)
+
+                            // Gambar di ListItem depth=0 (soal bergambar)
                             if (!empty($images)) {
-                                Log::info("Processing " . count($images) . " images in ListItem depth=0 (question)");
                                 foreach ($images as $img) {
                                     $url = $this->saveImage($img);
                                     if ($url) {
-                                        $imgTag = '<br/><img src="' . $url . '" style="max-width:100%;height:auto">';
-                                        $current['question'] .= $imgTag;
-                                        Log::info("Image added to question from ListItem depth=0");
+                                        $current['question'] .= '<br/><img src="' . $url . '" style="max-width:100%;height:auto">';
                                     }
                                 }
                             }
-                            
+
                             $seqOptIdx = 0;
                             $prevWasQuestion = true;
                             $hasOptions = false;
+                            $answerFound = false;
+                            $isTableQuestion = false;
                             $this->extractAnswerFromText($current, $text);
-                        } elseif ($depth == 1 && $current !== null) {
+                        } elseif ($depth >= 1 && $current !== null) {
                             $prevWasQuestion = false;
                             $hasOptions = true;
                             $this->extractAnswerFromText($current, $text);
                             $cleanText = $this->cleanOptionText($text);
+                            $before = count($current['options']);
                             $this->parseOptionLine($cleanText, $current['options'], $optMap, $seqOptIdx);
-                            
-                            // Handle images di ListItem depth=1 (opsi)
+
+                            // Opsi berupa gambar saja (teks kosong) -> placeholder
+                            if (count($current['options']) === $before && !empty($images)) {
+                                $letter = $optMap[$seqOptIdx] ?? null;
+                                if ($letter !== null) {
+                                    $current['options'][$letter] = '[Gambar]';
+                                    $seqOptIdx++;
+                                }
+                            }
+
+                            // Gambar di dalam opsi
                             if (!empty($images)) {
-                                Log::info("Processing " . count($images) . " images in ListItem depth=1 (option)");
                                 $optionKeys = array_keys($current['options']);
                                 $lastOptKey = end($optionKeys);
-                                
                                 if ($lastOptKey && isset($current['options'][$lastOptKey])) {
                                     foreach ($images as $img) {
                                         $url = $this->saveImage($img);
                                         if ($url) {
-                                            $imgTag = '<br/><img src="' . $url . '" style="max-width:100%;height:auto">';
-                                            $current['options'][$lastOptKey] .= $imgTag;
-                                            Log::info("Image added to option $lastOptKey from ListItem depth=1");
+                                            $current['options'][$lastOptKey] .= '<br/><img src="' . $url . '" style="max-width:100%;height:auto">';
                                         }
                                     }
-                                } else {
-                                    Log::warning("No option key found for images in ListItem depth=1");
                                 }
                             }
                         }
-                    } else {
-                        // Elemen biasa: TextRun, Table, Image, dll.
+                        continue;
+                    }
 
-                        // Handle Gambar DULU sebelum reset prevWasQuestion
-                        if (!empty($images) && $current !== null) {
-                            Log::info("Processing " . count($images) . " images for Q#{$questionNumber}, prevWasQuestion=" . ($prevWasQuestion ? 'true' : 'false') . ", hasOptions=" . ($hasOptions ? 'true' : 'false') . ", seqOptIdx=$seqOptIdx");
-                            
-                            foreach ($images as $img) {
-                                $url = $this->saveImage($img);
-                                if ($url) {
-                                    Log::info("Image saved: $url");
-                                    $imgTag = '<br/><img src="' . $url . '" style="max-width:100%;height:auto">';
-                                    
-                                    // Logic untuk menentukan kemana gambar ditambahkan:
-                                    // 1. Jika langsung setelah pertanyaan (prevWasQuestion=true) → ke question
-                                    // 2. Jika setelah opsi DAN ada text/explanation → ke question (gambar pembahasan)
-                                    // 3. Jika setelah opsi dan belum ada text → ke opsi terakhir (gambar opsi)
-                                    
-                                    if ($prevWasQuestion) {
-                                        // Gambar langsung setelah pertanyaan
-                                        $current['question'] .= $imgTag;
-                                        Log::info("Image added to question (prevWasQuestion=true)");
-                                    } elseif ($hasOptions && count($current['options']) > 0) {
-                                        // Ada opsi, masukkan ke opsi terakhir yang dibaca
-                                        $optionKeys = array_keys($current['options']);
-                                        $lastOptKey = end($optionKeys);
-                                        if ($lastOptKey && isset($current['options'][$lastOptKey])) {
-                                            $current['options'][$lastOptKey] .= $imgTag;
-                                            Log::info("Image added to option $lastOptKey (count=" . count($current['options']) . ")");
-                                        } else {
-                                            $pendingImages[] = $imgTag;
-                                            Log::info("Image added to pendingImages (no option found)");
-                                        }
+                    // 5. ELEMEN BIASA (TextRun, Title, Image, dsb.)
+                    if (!empty($images) && $current !== null) {
+                        foreach ($images as $img) {
+                            $url = $this->saveImage($img);
+                            if ($url) {
+                                $imgTag = '<br/><img src="' . $url . '" style="max-width:100%;height:auto">';
+
+                                if ($answerFound) {
+                                    // Gambar setelah kunci jawaban -> bagian pembahasan
+                                    $explanationText .= ' ' . $imgTag;
+                                } elseif ($prevWasQuestion) {
+                                    // Gambar langsung setelah pertanyaan -> ke soal
+                                    $current['question'] .= $imgTag;
+                                } elseif ($hasOptions && count($current['options']) > 0) {
+                                    $optionKeys = array_keys($current['options']);
+                                    $lastOptKey = end($optionKeys);
+                                    if ($lastOptKey && isset($current['options'][$lastOptKey])) {
+                                        $current['options'][$lastOptKey] .= $imgTag;
                                     } else {
                                         $pendingImages[] = $imgTag;
-                                        Log::info("Image added to pendingImages (default)");
                                     }
                                 } else {
-                                    Log::warning("saveImage() returned null");
+                                    $pendingImages[] = $imgTag;
                                 }
+                            }
+                        }
+                    }
+
+                    if (!empty(trim($text))) {
+                        // SOAL BER-NOMOR TULIS TANGAN: "1. Apa ibu kota Indonesia?"
+                        // (tanpa auto-numbering Word). Dikenali dari angka + titik.
+                        // Bisa jadi soal pertama dokumen (current masih null).
+                        //
+                        // Di templateMode, baris bernomor seperti "1. langkah
+                        // pertama..." yang muncul SETELAH jawaban ditemukan (konteks
+                        // pembahasan) bukan soal baru — soal hanya dari list item.
+                        // Namun jika current masih null (mis. soal pertama ditulis
+                        // manual sebelum ada list item) atau jawaban belum ditemukan,
+                        // deteksi plain-number tetap aktif (fleksibel).
+                        $inExplanationContext = $this->templateMode
+                            && $current !== null
+                            && $current['answer'] !== null;
+                        if (!$inExplanationContext
+                            && $this->isPlainQuestionLine($text)
+                            && ($current === null || $hasOptions || $current['answer'] !== null)) {
+                            if ($current !== null) {
+                                $this->finalizeQuestion($current, $questions, $explanationText, $pendingImages, $hasOptions, $seqOptIdx, $optMap);
+                                $explanationText = '';
+                                $pendingImages = [];
+                                $hasOptions = false;
+                            }
+
+                            $questionNumber++;
+                            $cleanQuestion = preg_replace('/^\s*\d+[\.\)]\s*/', '', $text);
+                            $current = [
+                                'question' => $this->deduplicateText(trim($cleanQuestion)),
+                                'options' => [],
+                                'answer' => null,
+                                'question_number' => $questionNumber,
+                            ];
+                            $seqOptIdx = 0;
+                            $prevWasQuestion = true;
+                            $answerFound = false;
+                            $isTableQuestion = false;
+                            $this->extractAnswerFromText($current, $text);
+                            continue;
+                        }
+
+                        // Teks sebelum soal pertama (judul/petunjuk) — abaikan
+                        if ($current === null) {
+                            continue;
+                        }
+
+                        // OPSI TULIS TANGAN: "A. Jakarta", "B.6", "E.Semua ..."
+                        // (boleh lanjutan setelah opsi pertama; berhenti otomatis
+                        // begitu kunci jawaban/pembahasan ditemukan)
+                        if (
+                            !$this->isPersonality
+                            && $current['answer'] === null
+                            && preg_match('/^\s*[A-Ea-e][\.\)]\s*/', $text)
+                        ) {
+                            $prevWasQuestion = false;
+                            $hasOptions = true;
+                            $this->extractAnswerFromText($current, $text);
+                            $this->parseOptionLine($this->cleanOptionText($text), $current['options'], $optMap, $seqOptIdx);
+                            continue;
+                        }
+
+                        // EKSTRAK POIN UNTUK SOAL KEPRIBADIAN
+                        if ($this->isPersonality) {
+                            $this->extractPersonalityPoints($current, $text);
+                        } else {
+                            $explanationText .= ' ' . $text;
+                            $this->extractAnswerFromText($current, $text);
+                            if ($current['answer'] !== null) {
+                                $answerFound = true;
                             }
                         }
 
-                        // Handle Teks (Termasuk teks di dalam Tabel)
-                        // Reset prevWasQuestion SETELAH gambar diproses
-                        if (!empty(trim($text)) && $current !== null) {
-                            if (preg_match('/^\s*(\d+)\.\s+[A-Z0-9]/', $text) && !$prevWasQuestion) {
-                                // Biarkan diproses di iterasi berikutnya jika ini ListItem
-                            } else {
-                                // EKSTRAK POIN UNTUK SOAL KEPRIBADIAN
-                                if ($this->isPersonality) {
-                                    $this->extractPersonalityPoints($current, $text);
-                                } else {
-                                    $explanationText .= ' ' . $text;
-                                    $this->extractAnswerFromText($current, $text);
-                                }
-                                
-                                // Reset prevWasQuestion untuk elemen berikutnya
-                                // Kecuali jika ini element kosong (Title, TextBreak, dll)
-                                if (strlen(trim(strip_tags($text))) > 3) {
-                                    $prevWasQuestion = false;
-                                }
-                            }
-                        } else {
-                            // Element kosong (TextBreak, Title tanpa text, dll)
-                            // JANGAN reset prevWasQuestion agar gambar di element berikutnya masih bisa masuk
+                        if (strlen(trim(strip_tags($text))) > 3) {
+                            $prevWasQuestion = false;
                         }
-                        
-                        // Update last element class for next iteration
-                        $lastElementClass = $elementClass;
                     }
                 }
             }
 
             // Handle pertanyaan terakhir
             if ($current !== null) {
-                $this->attachPendingImages($current, $pendingImages, $prevWasQuestion, $hasOptions, $seqOptIdx, $optMap);
-                $current['explanation'] = $explanationText;
-                if ($current['answer'] === null) $this->extractAnswerFromExplanation($current);
-                $questions[] = $current;
+                $this->finalizeQuestion($current, $questions, $explanationText, $pendingImages, $hasOptions, $seqOptIdx, $optMap);
             }
 
             // Filter pertanyaan kosong
@@ -220,15 +350,14 @@ class QuestionsWordImport
                 if ($q['answer'] === null && !empty($q['options'])) $this->extractAnswerFromMarkedOption($q);
                 if ($q['answer'] === null && !empty($q['options'])) $this->extractAnswerFromSingleOption($q);
 
-                // CEK APAKAH SOAL BERGAMBAR
                 $hasImages = stripos($q['question'], '<img') !== false;
 
-                // JIKA TIDAK ADA OPSI TAPI SOAL BERGAMBAR, BUAT PLACEHOLDER A-E
+                // Jika tidak ada opsi tapi soal bergambar -> placeholder A-E
                 if (empty($q['options']) || count(array_filter($q['options'])) === 0) {
                     if ($hasImages) {
                         $q['options'] = [
-                            'A' => '[Gambar A]', 'B' => '[Gambar B]', 'C' => '[Gambar C]',
-                            'D' => '[Gambar D]', 'E' => '[Gambar E]',
+                            'A' => 'A', 'B' => 'B', 'C' => 'C',
+                            'D' => 'D', 'E' => 'E',
                         ];
                     } else {
                         $q['options'] = ['A' => '', 'B' => '', 'C' => '', 'D' => '', 'E' => ''];
@@ -244,34 +373,230 @@ class QuestionsWordImport
             }
 
             $result = $this->saveQuestions($questions, $this->isPersonality);
+            // Beri tahu pemanggil format mana yang terdeteksi (berguna untuk
+            // umpan balik: "Format template terdeteksi" vs "Format fleksibel").
+            $result['format'] = $this->templateMode ? 'list' : 'flexible';
 
+            if ($result['success'] && $this->templateMode) {
+                $result['message'] .= ' Format template terdeteksi (soal list bernomor + opsi berhuruf).';
+            } elseif ($result['success']) {
+                $result['message'] .= ' Format fleksibel terdeteksi.';
+            }
+
+            // Soal kepribadian tidak punya kunci jawaban (pakai poin), jadi
+            // tidak perlu dimasukkan ke daftar jawaban tidak terdeteksi.
             $undetectedList = [];
-            foreach ($questions as $q) {
-                if (isset($q['answer_detected']) && $q['answer_detected'] === false) {
-                    $undetectedList[] = [
-                        'number' => $q['question_number'] ?? '?',
-                        'preview' => substr(strip_tags($q['question']), 0, 80),
-                    ];
+            if (!$this->isPersonality) {
+                foreach ($questions as $q) {
+                    if (isset($q['answer_detected']) && $q['answer_detected'] === false) {
+                        $undetectedList[] = [
+                            'number' => $q['question_number'] ?? '?',
+                            'preview' => substr(strip_tags($q['question']), 0, 80),
+                        ];
+                    }
                 }
             }
             $result['undetected_answers'] = $undetectedList;
 
             return $result;
-        } catch (\Exception $e) {
-            Log::error("Import failed: " . $e->getMessage());
+        } catch (\Throwable $e) {
+            Log::error("Import failed: " . $e->getMessage() . "\n" . $e->getTraceAsString());
             return [
                 'success' => false,
                 'message' => 'Gagal membaca file: ' . $e->getMessage(),
                 'count' => 0,
             ];
+        } finally {
+            if ($preprocessedPath && is_file($preprocessedPath)) {
+                @unlink($preprocessedPath);
+            }
         }
     }
 
-    protected function attachPendingImages(&$current, $pendingImages, $prevWasQuestion, $hasOptions, $seqOptIdx, $optMap)
+    /**
+     * Deteksi apakah dokumen memakai struktur list khas format template:
+     * list item depth-0 (soal bernomor) DAN list item depth-1 (opsi berhuruf).
+     * Dokumen seperti ini diparsing dengan mode terstruktur sebagai prioritas.
+     */
+    protected function detectTemplateMode($phpWord): bool
+    {
+        $hasDepth0Question = false;
+        $hasDepth1Option = false;
+
+        foreach ($phpWord->getSections() as $section) {
+            foreach ($section->getElements() as $element) {
+                if (!$element instanceof ListItemRun && !$element instanceof ListItem) {
+                    continue;
+                }
+                $depth = method_exists($element, 'getDepth') ? (int) $element->getDepth() : 0;
+                if ($depth === 0) {
+                    // Hanya list item dengan teks soal yang wajar (>= 8 karakter)
+                    // yang dihitung sebagai "soal" — item pendek seperti bullet
+                    // kecil di pembahasan tidak memicu mode template.
+                    $text = trim($this->getElemText($element));
+                    if (mb_strlen($text) >= 8) {
+                        $hasDepth0Question = true;
+                    }
+                } elseif ($depth >= 1) {
+                    $hasDepth1Option = true;
+                }
+                if ($hasDepth0Question && $hasDepth1Option) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Proses elemen Tabel:
+     *  1. Tabel soal (sel pertama diawali nomor soal, mis. "27. hayam") -> soal baru
+     *  2. Tabel opsi (soal berjalan belum punya opsi) -> ekstrak opsi per baris/sel
+     *  3. Selain itu -> teks pembahasan
+     */
+    protected function handleTable(
+        Table $table,
+        &$current,
+        array &$questions,
+        &$explanationText,
+        &$hasOptions,
+        int &$seqOptIdx,
+        array $optMap,
+        int &$questionNumber,
+        bool &$prevWasQuestion,
+        bool &$answerFound,
+        bool &$isTableQuestion,
+        array &$pendingImages
+    ): void {
+        $lines = $this->getTableLines($table);
+        $lines = array_values(array_filter($lines, fn($l) => trim($l) !== ''));
+        if (empty($lines)) return;
+
+        $first = trim($lines[0] ?? '');
+
+        // --- 1. Tabel berisi soal baru (nomor di sel pertama) ---
+        if ($current !== null && $hasOptions && preg_match('/^\s*\d+[\.\)]\s+/', $first)) {
+            $this->finalizeQuestion($current, $questions, $explanationText, $pendingImages, $hasOptions, $seqOptIdx, $optMap);
+            $explanationText = '';
+            $pendingImages = [];
+            $hasOptions = false;
+
+            $questionNumber++;
+            $questionText = preg_replace('/^\s*\d+[\.\)]\s*/', '', implode(' ', $lines));
+            $current = [
+                'question' => $this->deduplicateText(trim($questionText)),
+                'options' => [],
+                'answer' => null,
+                'question_number' => $questionNumber,
+            ];
+            $seqOptIdx = 0;
+            $prevWasQuestion = true;
+            $answerFound = false;
+            $isTableQuestion = true; // opsi lanjutan mungkin list pendek
+            $this->extractAnswerFromText($current, $questionText);
+            return;
+        }
+
+        // --- 2. Tabel berisi opsi soal berjalan ---
+        if ($current !== null && !$hasOptions && $current['answer'] === null) {
+            foreach ($lines as $line) {
+                // Kunci jawaban muncul di dalam tabel ("Jawaban : C Pembahasan : ...")
+                if (preg_match('/Jawaban\s*:?\s*([A-Ea-e])/i', $line, $m)) {
+                    $current['answer'] = strtoupper($m[1]);
+                    $answerFound = true;
+                    $hasOptions = true;
+                    $rest = preg_replace('/Jawaban\s*:?\s*[A-Ea-e]/i', '', $line);
+                    $rest = preg_replace('/^\s*Pembahasan\s*:?\s*/i', '', $rest);
+                    $rest = trim($rest);
+                    if ($rest !== '' && !$this->startsWithExplanation($rest)) {
+                        $explanationText .= ' ' . $rest;
+                    }
+                    continue;
+                }
+
+                if (!$answerFound && $this->isOptionLine($line)) {
+                    $hasOptions = true;
+                    $this->parseOptionLine($this->cleanOptionText($line), $current['options'], $optMap, $seqOptIdx);
+                } elseif ($this->startsWithExplanation($line)) {
+                    $answerFound = true; // masuk pembahasan
+                    $explanationText .= ' ' . $line;
+                } elseif ($answerFound) {
+                    $explanationText .= ' ' . $line;
+                }
+            }
+            if ($hasOptions) {
+                $prevWasQuestion = false;
+            }
+            return;
+        }
+
+        // --- 3. Tabel pembahasan biasa ---
+        $explanationText .= ' ' . implode(' ', $lines);
+    }
+
+    /**
+     * Ambil semua baris teks tabel (per paragraf per sel), urut baris-mayor.
+     *
+     * @return string[]
+     */
+    protected function getTableLines(Table $table): array
+    {
+        $lines = [];
+        foreach ($table->getRows() as $row) {
+            foreach ($row->getCells() as $cell) {
+                foreach ($cell->getElements() as $cellElem) {
+                    $t = trim($this->getElemText($cellElem));
+                    if ($t !== '') $lines[] = $t;
+                }
+            }
+        }
+        return $lines;
+    }
+
+    protected function isPlainQuestionLine(string $text): bool
+    {
+        // "1. Apa ibu kota Indonesia?" — angka + titik + spasi, sisa teks cukup
+        // panjang. "1. 200" (opsi bernomor di pembahasan) tidak dianggap soal.
+        if (!preg_match('/^\s*\d+[\.\)]\s+/', $text)) return false;
+        $rest = trim(preg_replace('/^\s*\d+[\.\)]\s*/', '', $text));
+        return mb_strlen($rest) >= 8;
+    }
+
+    protected function isOptionLine(string $text): bool
+    {
+        // "A. 10 km", "B) ...", "E.Semua ..."
+        if (preg_match('/^\s*[A-Ea-e][\.\)]\s*/', $text)) return true;
+        // Baris pendek bernomor/unit, mis. "13 menit", "10%", "Rp.2.375.000,00"
+        if (preg_match('/^\s*[\d.,]+\s*[A-Za-z%Rp.]{0,14}$/', $text) && mb_strlen($text) < 25) return true;
+        return false;
+    }
+
+    protected function startsWithExplanation(string $text): bool
+    {
+        return (bool) preg_match('/^\s*(Pembahasan|Diketahui|Ditanya|Jawab)\s*[:：]?/i', $text);
+    }
+
+    protected function finalizeQuestion(
+        &$current,
+        array &$questions,
+        &$explanationText,
+        array $pendingImages,
+        bool $hasOptions,
+        int $seqOptIdx,
+        array $optMap
+    ): void {
+        $this->attachPendingImages($current, $pendingImages, $hasOptions, $seqOptIdx, $optMap);
+        $current['explanation'] = $explanationText;
+        if ($current['answer'] === null) $this->extractAnswerFromExplanation($current);
+        $questions[] = $current;
+    }
+
+    protected function attachPendingImages(&$current, $pendingImages, $hasOptions, $seqOptIdx, $optMap)
     {
         if (empty($pendingImages)) return;
         foreach ($pendingImages as $imgTag) {
-            if ($prevWasQuestion) {
+            if (!$hasOptions) {
                 $current['question'] .= $imgTag;
             } elseif ($hasOptions && $seqOptIdx > 0) {
                 $lastOptKey = $optMap[$seqOptIdx - 1] ?? null;
@@ -285,61 +610,215 @@ class QuestionsWordImport
     }
 
     // -------------------------------------------------------------------------
+    // PREPROCESS DOCX: unwrap <mc:AlternateContent> agar gambar terlihat PHPWord
+    // -------------------------------------------------------------------------
+
+    /**
+     * Salin .docx ke file temp dengan document.xml yang sudah "dibersihkan":
+     * blok <mc:AlternateContent> yang berisi <w:drawing> diganti menjadi
+     * <w:r><w:drawing>...</w:drawing></w:r> (struktur standar yang dipahami
+     * PHPWord). Kembalikan path file temp (harus di-unlink pemanggil).
+     */
+    protected function preprocessDocx(string $path): string
+    {
+        $zip = new ZipArchive();
+        if (!$zip->open($path)) {
+            throw new \RuntimeException('File .docx tidak dapat dibuka (bukan dokumen Word yang valid).');
+        }
+
+        $xml = $zip->getFromName('word/document.xml');
+        if ($xml === false || $xml === '') {
+            $zip->close();
+            throw new \RuntimeException('File .docx tidak memiliki konten dokumen (word/document.xml).');
+        }
+
+        $newXml = $this->unwrapAlternateContent($xml);
+
+        $tmp = tempnam(sys_get_temp_dir(), 'docx_');
+        if ($tmp === false) {
+            $zip->close();
+            throw new \RuntimeException('Tidak dapat membuat file sementara untuk import.');
+        }
+        $tmp .= '.docx';
+
+        $outZip = new ZipArchive();
+        if (!$outZip->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE)) {
+            $zip->close();
+            @unlink($tmp);
+            throw new \RuntimeException('Tidak dapat menulis file sementara untuk import.');
+        }
+
+        $numFiles = $zip->numFiles;
+        for ($i = 0; $i < $numFiles; $i++) {
+            $name = $zip->getNameIndex($i);
+            if ($name === false) continue;
+            if ($name === 'word/document.xml') {
+                $outZip->addFromString($name, $newXml);
+            } else {
+                $content = $zip->getFromName($name);
+                if ($content !== false) {
+                    $outZip->addFromString($name, $content);
+                }
+            }
+        }
+
+        $zip->close();
+        $outZip->close();
+
+        return $tmp;
+    }
+
+    /**
+     * Ganti blok <mc:AlternateContent> yang memuat <w:drawing> dengan
+     * <w:r><w:drawing>...</w:drawing></w:r>. Jika tidak ada perubahan, XML
+     * asli dikembalikan.
+     */
+    protected function unwrapAlternateContent(string $xml): string
+    {
+        if (strpos($xml, 'AlternateContent') === false) {
+            return $xml;
+        }
+
+        $dom = new \DOMDocument();
+        $prev = libxml_use_internal_errors(true);
+        $ok = $dom->loadXML($xml);
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+        if (!$ok) return $xml;
+
+        $xpath = new \DOMXPath($dom);
+        $xpath->registerNamespace('mc', self::NS_MC);
+        $xpath->registerNamespace('w', self::NS_W);
+
+        $changed = false;
+        $acs = $xpath->query('//mc:AlternateContent');
+        foreach ($acs as $ac) {
+            $choice = null;
+            foreach ($ac->childNodes as $c) {
+                if ($c->nodeType === XML_ELEMENT_NODE && $c->localName === 'Choice') {
+                    $choice = $c;
+                    break;
+                }
+            }
+            if (!$choice) continue;
+
+            $drawings = [];
+            foreach ($choice->childNodes as $c) {
+                if ($c->nodeType === XML_ELEMENT_NODE && $c->localName === 'drawing' && $c->namespaceURI === self::NS_W) {
+                    $drawings[] = $c;
+                }
+            }
+            if (empty($drawings)) continue;
+
+            $parent = $ac->parentNode;
+            if (!$parent) continue;
+
+            // Teks di dalam text box (wps:txbx / w:txbxContent) — mis. "Jawaban :
+            // B" — ikut disalin sebagai <w:t> biasa. Tanpa ini, PHPWord hanya
+            // melihat gambar dan teks jawabannya hilang.
+            $boxText = '';
+            $textParts = [];
+            foreach ($drawings as $d) {
+                foreach ($xpath->query('.//w:t', $d) as $tn) {
+                    $textParts[] = $tn->textContent;
+                }
+            }
+            $boxText = trim(implode(' ', $textParts));
+
+            // Jika blok AlternateContent sudah berada di dalam <w:r>, gambar
+            // langsung disisipkan di tempatnya (tanpa run baru — run bersarang
+            // tidak dibaca PHPWord). Jika tidak, bungkus dengan <w:r> baru.
+            $parentIsRun = $parent->nodeType === XML_ELEMENT_NODE
+                && $parent->localName === 'r'
+                && $parent->namespaceURI === self::NS_W;
+
+            if ($parentIsRun) {
+                foreach ($drawings as $d) {
+                    $parent->insertBefore($dom->importNode($d, true), $ac);
+                }
+                if ($boxText !== '') {
+                    $parent->insertBefore($this->createTextNode($dom, $boxText), $ac);
+                }
+                $parent->removeChild($ac);
+            } else {
+                $run = $dom->createElementNS(self::NS_W, 'w:r');
+                foreach ($drawings as $d) {
+                    $run->appendChild($dom->importNode($d, true));
+                }
+                if ($boxText !== '') {
+                    $run->appendChild($this->createTextNode($dom, $boxText));
+                }
+                $parent->insertBefore($run, $ac);
+                $parent->removeChild($ac);
+            }
+            $changed = true;
+        }
+
+        if (!$changed) return $xml;
+        return $dom->saveXML();
+    }
+
+    protected function createTextNode(\DOMDocument $dom, string $text): \DOMElement
+    {
+        $t = $dom->createElementNS(self::NS_W, 'w:t');
+        $t->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
+        $t->textContent = $text;
+        return $t;
+    }
+
+    // -------------------------------------------------------------------------
     // METODE EKSTRAKSI JAWABAN
     // -------------------------------------------------------------------------
-    
+
     /**
      * EKSTRAKSI POIN UNTUK SOAL KEPRIBADIAN
      * Format: POIN: A=5|B=4|C=3|D=2|E=1
      */
     protected function extractPersonalityPoints(array &$question, string $text): void
     {
-        // Cari pattern POIN: A=5|B=4|C=3|D=2|E=1
-        if (preg_match('/POIN\s*:\s*(.+)$/i', $text, $matches)) {
+        if (preg_match('/POIN\s*[:：]\s*(.+)$/i', $text, $matches)) {
             $pointsStr = trim($matches[1]);
             $pairs = explode('|', $pointsStr);
-            
+
             $points = [];
             foreach ($pairs as $pair) {
                 if (preg_match('/([A-E])\s*=\s*(\d+)/i', $pair, $m)) {
                     $option = strtoupper($m[1]);
                     $value = (int)$m[2];
-                    
-                    // Map A-E ke 1-5
+
                     $optionMap = ['A' => 1, 'B' => 2, 'C' => 3, 'D' => 4, 'E' => 5];
                     if (isset($optionMap[$option])) {
                         $points[$optionMap[$option]] = $value;
                     }
                 }
             }
-            
+
             if (!empty($points)) {
                 $question['personality_points'] = $points;
-                Log::info("Personality points extracted: " . json_encode($points));
             }
         }
     }
-    
+
     protected function deduplicateText(string $text): string
     {
-        // Remove exact duplicate patterns (e.g., "text text" -> "text")
-        // Match any sequence of 3+ chars that repeats immediately
-        $text = preg_replace('/(.{3,}?)\1+/', '$1', $text);
-        return $text;
+        // Hanya rapikan duplikasi frasa KATA (mis. "Jawaban : BJawaban : B" ->
+        // "Jawaban : B"). Pengulangan ANGKA seperti "000.000" pada
+        // "Rp.2.000.000,00" TIDAK boleh digabung.
+        return preg_replace_callback('/(.{4,}?)\1+/u', function ($m) {
+            return preg_match('/[A-Za-z]{2,}/', $m[1]) ? $m[1] : $m[0];
+        }, $text);
     }
 
     protected function extractAnswerFromText(array &$question, ?string $text = null): void
     {
         $textToCheck = $text ?? $question['question'] ?? '';
-        $availableOptions = array_keys($question['options'] ?? ['A', 'B', 'C', 'D', 'E']);
+        if ($question['answer'] !== null) return;
 
-        // Pattern: Jawaban : C atau Jawaban: C
-        if (preg_match('/Jawaban\s*:\s*([A-E])/i', $textToCheck, $m)) {
-            $found = strtoupper($m[1]);
-            $question['answer'] = $found;
+        if (preg_match('/Jawaban\s*[:：]\s*([A-Ea-e])/i', $textToCheck, $m)) {
+            $question['answer'] = strtoupper($m[1]);
             return;
         }
-        if (preg_match('/jawaban\s+(?:yang\s+paling\s+tepat\s+)?(?:adalah\s+)?["\']?([A-E])["\']?/i', $textToCheck, $m)) {
+        if (preg_match('/jawaban\s+(?:yang\s+paling\s+tepat\s+)?(?:adalah\s+)?["\']?([A-Ea-e])["\']?/i', $textToCheck, $m)) {
             $question['answer'] = strtoupper($m[1]);
             return;
         }
@@ -351,7 +830,13 @@ class QuestionsWordImport
         $availableOptions = array_keys($question['options'] ?? ['A', 'B', 'C', 'D', 'E']);
         if (empty($explanationText) || empty($availableOptions)) return;
 
-        if (preg_match('/(?:jawaban(?:nya)?|yang\s+paling\s+tepat)\s+(?:adalah\s+)?["\']?([A-E])["\']?/i', $explanationText, $m)) {
+        if (preg_match('/(?:jawaban(?:nya)?|yang\s+paling\s+tepat)\s+(?:adalah\s+)?["\']?([A-Ea-e])["\']?/i', $explanationText, $m)) {
+            $question['answer'] = strtoupper($m[1]);
+            return;
+        }
+        // "Pembahasan : A" — jawaban ditulis di awal baris pembahasan
+        if (preg_match('/Pembahasan\s*[:：]?\s*([A-Ea-e])\b/i', $explanationText, $m)
+            && in_array(strtoupper($m[1]), $availableOptions)) {
             $question['answer'] = strtoupper($m[1]);
             return;
         }
@@ -390,23 +875,30 @@ class QuestionsWordImport
 
     protected function cleanOptionText(string $text): string
     {
-        $text = preg_replace('/[#>]*\s*Jawaban\s*[:\-]\s*[A-E].*$/i', '', $text);
-        $text = preg_replace('/\s*Pembahasan\s*[:\-].*$/i', '', $text);
+        $text = preg_replace('/[#>]*\s*Jawaban\s*[:：\-]\s*[A-Ea-e].*$/i', '', $text);
+        $text = preg_replace('/\s*Pembahasan\s*[:：\-].*$/i', '', $text);
         return trim($text);
     }
 
     protected function parseOptionLine(string $text, array &$options, array $optMap, int &$seqOptIdx): void
     {
-        // Deduplicate text first
         $text = $this->deduplicateText($text);
-        
+
+        // 1. Pecah berdasarkan tab / spasi ganda
         $parts = preg_split('/\t+|\s{2,}/', $text);
+        $split = [];
         foreach ($parts as $part) {
-            $part = trim($part);
-            if ($part === '') continue;
-            if (preg_match('/^(?:\d+\.)?\s*([A-E])\.\s*(.+)$/i', $part, $m)) {
+            if (trim($part) === '') continue;
+            // 2. Pecah lebih lanjut jika dua opsi menempel, mis. "18 menitE. 20 menit"
+            foreach ($this->splitCombinedOptions($part) as $sub) {
+                if (trim($sub) !== '') $split[] = trim($sub);
+            }
+        }
+
+        foreach ($split as $part) {
+            if (preg_match('/^(?:\d+\.)?\s*([A-Ea-e])\.\s*(.+)$/i', $part, $m)) {
                 $options[strtoupper($m[1])] = trim($m[2]);
-            } elseif (preg_match('/^([A-E])\s+(.+)$/i', $part, $m)) {
+            } elseif (preg_match('/^([A-Ea-e])\s+(.+)$/i', $part, $m)) {
                 $options[strtoupper($m[1])] = trim($m[2]);
             } else {
                 $letter = $optMap[$seqOptIdx] ?? null;
@@ -417,8 +909,28 @@ class QuestionsWordImport
     }
 
     /**
-     * EKSTRAKSI GAMBAR REKURSIF (TERMASUK TABEL, ROW, CELL)
+     * Pecah baris opsi yang menempel tanpa spasi, mis.:
+     *   "18 menitE. 20 menit"  -> ["18 menit", "E. 20 menit"]
+     *   "12.000 kgD. 11.761 kg"-> ["12.000 kg", "D. 11.761 kg"]
+     * Huruf di tengah kata (mis. "berbeda.") tidak ikut terpecah karena harus
+     * diikuti titik.
      */
+    protected function splitCombinedOptions(string $text): array
+    {
+        // Hanya huruf KAPITAL A-E yang dipecah, mis. "18 menitE. 20 menit",
+        // "12.000 kgD. 11.761 kg". Huruf kecil di tengah kata ("sepeda. 15")
+        // tidak boleh terpecah.
+        if (!preg_match('/[A-E]\./', $text)) {
+            return [$text];
+        }
+        $parts = preg_split('/(?<=[^\sA-E])[A-E](?=\.\s)/', $text);
+        return $parts === false ? [$text] : $parts;
+    }
+
+    // -------------------------------------------------------------------------
+    // EKSTRAKSI GAMBAR REKURSIF (TERMASUK TABEL, ROW, CELL, TITLE)
+    // -------------------------------------------------------------------------
+
     protected function extractImages($elem, array &$images): void
     {
         if (!is_object($elem)) return;
@@ -429,19 +941,24 @@ class QuestionsWordImport
             return;
         }
 
-        // TextRun, ListItemRun, Cell
+        // Title menyimpan teksnya dalam TextRun internal
+        if ($elem instanceof Title) {
+            $t = $elem->getText();
+            if ($t instanceof TextRun) {
+                foreach ($t->getElements() as $child) $this->extractImages($child, $images);
+            }
+            return;
+        }
+
         if (method_exists($elem, 'getElements')) {
             foreach ($elem->getElements() as $child) $this->extractImages($child, $images);
         }
-        // Table -> Rows
         if (method_exists($elem, 'getRows')) {
             foreach ($elem->getRows() as $row) $this->extractImages($row, $images);
         }
-        // Row -> Cells
         if (method_exists($elem, 'getCells')) {
             foreach ($elem->getCells() as $cell) $this->extractImages($cell, $images);
         }
-        // Fallback children
         if (property_exists($elem, 'children') && is_array($elem->children)) {
             foreach ($elem->children as $child) $this->extractImages($child, $images);
         }
@@ -454,21 +971,79 @@ class QuestionsWordImport
             $b64 = $imgElem->getImageStringData(true);
             if (!$b64) return null;
             $binary = base64_decode($b64);
-            
-            // TURUNKAN THRESHOLD DARI 200 KE 50 BYTES
+
             if (!$binary || strlen($binary) < 50) {
                 return null;
             }
-            
-            return ImageConverter::convertAndStore($binary, 'question-images', 85);
-        } catch (\Exception $e) {
+
+            // Cegah fatal memory_limit di server (mis. VPS 128M) saat memproses
+            // foto besar. GD butuh ± W*H*4 byte per buffer; jika perkiraan
+            // kebutuhan melebihi sisa memori, simpan gambar asli apa adanya.
+            $info = function_exists('getimagesizefromstring') ? @getimagesizefromstring($binary) : false;
+            if ($info) {
+                $needBytes = (int) $info[0] * (int) $info[1] * 8; // buffer src + dst
+                $limitBytes = $this->memoryLimitBytes();
+                if ($limitBytes > 0 && (memory_get_usage(true) + $needBytes) > (int) ($limitBytes * 0.8)) {
+                    Log::warning('Import: memori terbatas, gambar disimpan apa adanya (' . $needBytes . ' bytes).');
+                    return $this->storeRawImage($binary, $this->detectImageExtension($binary));
+                }
+            }
+
+            $url = ImageConverter::convertAndStore($binary, 'question-images', 80, 1400);
+            if ($url) return $url;
+
+            // GD/webp tidak tersedia -> simpan gambar asli
+            return $this->storeRawImage($binary, $this->detectImageExtension($binary));
+        } catch (\Throwable $e) {
             Log::error("Failed to save image: " . $e->getMessage());
             return null;
         }
     }
 
     /**
-     * EKSTRAKSI TEKS REKURSIF (TERMASUK TABEL, ROW, CELL)
+     * Simpan gambar asli tanpa konversi (fallback saat GD/webp/memori terbatas).
+     */
+    protected function storeRawImage(string $binary, string $ext = 'bin'): ?string
+    {
+        try {
+            if (!preg_match('/^[a-z0-9]{2,5}$/', $ext)) $ext = 'bin';
+            $filename = uniqid('img_', true) . '.' . $ext;
+            \Illuminate\Support\Facades\Storage::disk('public')->put('question-images/' . $filename, $binary);
+            return \Illuminate\Support\Facades\Storage::url('question-images/' . $filename);
+        } catch (\Throwable $e) {
+            Log::error("Failed to store raw image: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Deteksi ekstensi dari signature biner (tanpa bergantung pada GD).
+     */
+    protected function detectImageExtension(string $binary): string
+    {
+        if (strncmp($binary, "\x89PNG", 4) === 0) return 'png';
+        if (strncmp($binary, "\xFF\xD8", 2) === 0) return 'jpg';
+        if (strncmp($binary, 'GIF8', 4) === 0) return 'gif';
+        if (strncmp($binary, 'RIFF', 4) === 0 && substr($binary, 8, 4) === 'WEBP') return 'webp';
+        return 'bin';
+    }
+
+    protected function memoryLimitBytes(): int
+    {
+        $val = ini_get('memory_limit');
+        if ($val === false || $val === '' || $val === '-1') return 0;
+        $unit = strtolower(substr($val, -1));
+        $num = (int) $val;
+        switch ($unit) {
+            case 'g': $num *= 1024 * 1024 * 1024; break;
+            case 'm': $num *= 1024 * 1024; break;
+            case 'k': $num *= 1024; break;
+        }
+        return $num;
+    }
+
+    /**
+     * EKSTRAKSI TEKS REKURSIF (TERMASUK TABEL, ROW, CELL, TITLE)
      * SKIP IMAGE ELEMENTS
      */
     protected function getElemText($elem): string
@@ -478,6 +1053,21 @@ class QuestionsWordImport
         $class = basename(str_replace('\\', '/', get_class($elem)));
         if ($class === 'Image') return '';
 
+        // Title (Heading) menyimpan teks dalam TextRun internal
+        if ($elem instanceof Title) {
+            $titleText = $elem->getText();
+            if (is_string($titleText)) return $titleText;
+            if ($titleText instanceof TextRun) {
+                foreach ($titleText->getElements() as $child) {
+                    $t .= $this->getElemText($child);
+                }
+            }
+            return $t;
+        }
+
+        // Elemen wadah (TextRun, ListItemRun, Cell, dst.) punya BAIK getElements
+        // MAUPUN getText() yang menggabungkan anak-anaknya. Menggunakan keduanya
+        // akan menggandakan teks — cukup rekursi anak-anaknya saja.
         if (method_exists($elem, 'getElements')) {
             foreach ($elem->getElements() as $child) $t .= $this->getElemText($child);
         }
@@ -487,7 +1077,13 @@ class QuestionsWordImport
         if (method_exists($elem, 'getCells')) {
             foreach ($elem->getCells() as $cell) $t .= $this->getElemText($cell);
         }
-        if (method_exists($elem, 'getText')) {
+
+        // Daun (Text, ListItem, dsb.): teks langsung dari getText()
+        if (!method_exists($elem, 'getElements')
+            && !method_exists($elem, 'getRows')
+            && !method_exists($elem, 'getCells')
+            && method_exists($elem, 'getText')
+        ) {
             $val = $elem->getText();
             if (is_string($val)) $t .= $val;
         }
@@ -513,7 +1109,7 @@ class QuestionsWordImport
             $hasContentOptions = false;
             foreach (['A', 'B', 'C', 'D', 'E'] as $opt) {
                 $optionText = $q['options'][$opt] ?? '';
-                if (!empty(trim($optionText)) && !in_array(strtolower(trim($optionText)), ['[gambar a]', '[gambar b]', '[gambar c]', '[gambar d]', '[gambar e]'])) {
+                if (!empty(trim($optionText)) && !in_array(strtolower(trim($optionText)), ['[gambar a]', '[gambar b]', '[gambar c]', '[gambar d]', '[gambar e]', '[gambar]'])) {
                     $hasContentOptions = true;
                     break;
                 }
@@ -552,14 +1148,11 @@ class QuestionsWordImport
 
                 if ($isPersonality) {
                     $data['answer'] = 1;
-                    
-                    // Gunakan poin yang diekstrak dari Word, atau default
+
                     if (isset($q['personality_points']) && !empty($q['personality_points'])) {
                         $data['points'] = $q['personality_points'];
-                        Log::info("Using extracted points for Q#{$questionNumber}: " . json_encode($q['personality_points']));
                     } else {
                         $data['points'] = ['1' => 5, '2' => 4, '3' => 3, '4' => 2, '5' => 1];
-                        Log::info("Using default points for Q#{$questionNumber}");
                     }
                 } else {
                     $answerMap = ['A' => 1, 'B' => 2, 'C' => 3, 'D' => 4, 'E' => 5];

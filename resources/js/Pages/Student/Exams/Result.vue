@@ -145,7 +145,7 @@ export default {
     color: #1e293b;
 }
 
-.text-indigo { color: #4f46e5; }
+.text-indigo { color: #1A2332; }
 
 /* ── Info table ─────────────────────────────────── */
 .info-table {
@@ -189,7 +189,7 @@ export default {
 
 .badge-indigo {
     background: #e0e7ff;
-    color: #4f46e5;
+    color: #1A2332;
 }
 
 .badge-cyan {
@@ -241,12 +241,12 @@ export default {
 }
 
 .btn-flat-primary {
-    background: #4f46e5;
+    background: #1A2332;
     color: #fff;
 }
 
 .btn-flat-primary:hover {
-    background: #4338ca;
+    background: #1A2332;
     color: #fff;
 }
 
@@ -260,10 +260,15 @@ export default {
     color: #1e293b;
 }
 
+.btn-flat-secondary.btn-sm {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+}
+
 /* ── Mobile Responsive ───────────────────────────── */
 @media (max-width: 576px) {
     .page-wrap {
-        padding: 10px 0 24px;
+        padding: 16px 0 48px;
     }
 
     .flat-card {
@@ -305,7 +310,7 @@ export default {
         color: #0f172a;
     }
 
-    .btn-flat {
+    .btn-flat:not(.btn-sm) {
         width: 100%;
         justify-content: center;
     }

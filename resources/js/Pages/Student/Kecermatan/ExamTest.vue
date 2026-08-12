@@ -496,7 +496,7 @@ h1 {
 .answer-section {
     background: rgba(255, 255, 255, 0.96);
     border: 1px solid rgba(214, 224, 238, 0.9);
-    box-shadow: 0 18px 44px rgba(13, 33, 63, 0.07);
+    box-shadow: none;
 }
 
 .instruction-card {
@@ -735,7 +735,7 @@ h1 {
     border: 2px solid #dbe4f0;
     background: #fff;
     font-size: clamp(2rem, 4vw, 3rem);
-    box-shadow: 0 8px 20px rgba(13, 33, 63, 0.06);
+    box-shadow: none;
 }
 
 .symbol--missing {
@@ -761,7 +761,6 @@ h1 {
         background 0.18s ease;
 }
 
-.answer-button:hover,
 .answer-button:focus-visible {
     transform: translateY(-4px);
     border-color: #7da7ff;

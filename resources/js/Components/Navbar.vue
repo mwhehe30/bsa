@@ -22,7 +22,7 @@
                                 <img
                                     class="avatar rounded-circle"
                                     alt="Image placeholder"
-                                    :src="`https://ui-avatars.com/api/?name=${$page.props.auth.user.name}&amp;background=4e73df&amp;color=ffffff&amp;size=100`"
+                                    :src="`https://ui-avatars.com/api/?name=${$page.props.auth.user.name}&amp;background=1A2332&amp;color=ffffff&amp;size=100`"
                                 />
                                 <div
                                     class="media-body text-dark align-items-center d-none d-lg-block ms-2"

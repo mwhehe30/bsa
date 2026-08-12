@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Models\Lesson;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\Storage;
 
 class LessonController extends Controller
 {
@@ -47,14 +48,33 @@ class LessonController extends Controller
         $request->validate([
             'name' => 'required|string|unique:lessons',
             'category' => 'required|in:psikologi,akademik',
+            // Ekstensi dicek manual (bukan rule mimes) agar tidak bergantung pada
+            // ekstensi fileinfo di server.
+            'thumbnail' => 'nullable|file|max:5120',
+        ], [
+            'thumbnail.max' => 'Ukuran thumbnail maksimal 5 MB.',
         ]);
+
+        if ($request->hasFile('thumbnail')) {
+            $thumbExt = strtolower($request->file('thumbnail')->getClientOriginalExtension());
+            if (!in_array($thumbExt, ['jpg', 'jpeg', 'png', 'webp'])) {
+                return redirect()->back()->withInput()->withErrors([
+                    'thumbnail' => 'Format thumbnail harus JPG, PNG, atau WebP.',
+                ]);
+            }
+        }
 
         // Get max order for category
         $maxOrder = Lesson::where('category', $request->category)->max('order') ?? 0;
 
+        $thumbnail = $request->hasFile('thumbnail')
+            ? $request->file('thumbnail')->store('lesson-thumbnails', 'public')
+            : null;
+
         Lesson::create([
             'name' => $request->name,
             'category' => $request->category,
+            'thumbnail' => $thumbnail,
             'order' => $maxOrder + 1,
         ]);
 
@@ -81,11 +101,32 @@ class LessonController extends Controller
         $request->validate([
             'name' => 'required|string|unique:lessons,name,'.$lesson->id,
             'category' => 'required|in:psikologi,akademik',
+            'thumbnail' => 'nullable|file|max:5120',
+        ], [
+            'thumbnail.max' => 'Ukuran thumbnail maksimal 5 MB.',
         ]);
+
+        if ($request->hasFile('thumbnail')) {
+            $thumbExt = strtolower($request->file('thumbnail')->getClientOriginalExtension());
+            if (!in_array($thumbExt, ['jpg', 'jpeg', 'png', 'webp'])) {
+                return redirect()->back()->withInput()->withErrors([
+                    'thumbnail' => 'Format thumbnail harus JPG, PNG, atau WebP.',
+                ]);
+            }
+        }
+
+        $thumbnail = $lesson->thumbnail;
+        if ($request->hasFile('thumbnail')) {
+            if ($thumbnail) {
+                Storage::disk('public')->delete($thumbnail);
+            }
+            $thumbnail = $request->file('thumbnail')->store('lesson-thumbnails', 'public');
+        }
 
         $lesson->update([
             'name' => $request->name,
             'category' => $request->category,
+            'thumbnail' => $thumbnail,
         ]);
 
         return redirect()->route('admin.lessons.index');
@@ -97,6 +138,9 @@ class LessonController extends Controller
     public function destroy($id)
     {
         $lesson = Lesson::findOrFail($id);
+        if ($lesson->thumbnail) {
+            Storage::disk('public')->delete($lesson->thumbnail);
+        }
         $lesson->delete();
 
         return redirect()->route('admin.lessons.index');

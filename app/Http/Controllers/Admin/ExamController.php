@@ -88,7 +88,9 @@ class ExamController extends Controller
             'random_question' => 'required|in:Y,N',
             'random_answer' => 'required|in:Y,N',
             'show_answer' => 'required|in:Y,N',
-            'import_file' => 'nullable|mimes:csv,xls,xlsx,doc,docx|max:20480',
+            // Validasi berbasis ukuran saja (bukan mimes) agar tidak bergantung
+            // pada fileinfo; ekstensi diperiksa manual di bawah.
+            'import_file' => 'nullable|file|max:20480',
         ]);
 
         // Check if lesson is Kecermatan
@@ -179,26 +181,38 @@ class ExamController extends Controller
             }
 
             if ($request->hasFile('import_file')) {
-                $file = $request->file('import_file');
-                $ext = strtolower($file->getClientOriginalExtension());
-                if (in_array($ext, ['doc', 'docx'])) {
-                    $import = new QuestionsWordImport($exam->id, $exam->isPersonality());
-                    $result = $import->import($file);
+                try {
+                    $file = $request->file('import_file');
+                    $ext = strtolower($file->getClientOriginalExtension());
 
-                    if (isset($result['undetected_answers']) && !empty($result['undetected_answers'])) {
-                        session()->flash('undetected_answers', $result['undetected_answers']);
-                    }
+                    if ($ext === 'docx') {
+                        $import = new QuestionsWordImport($exam->id, $exam->isPersonality());
+                        $result = $import->import($file);
 
-                    if (isset($result['has_warnings']) && $result['has_warnings']) {
-                        session()->flash('import_warnings', $result['warnings']);
-                    }
+                        if (isset($result['undetected_answers']) && !empty($result['undetected_answers'])) {
+                            session()->flash('undetected_answers', $result['undetected_answers']);
+                        }
 
-                    if (isset($result['has_errors']) && $result['has_errors']) {
-                        session()->flash('import_errors', $result['errors']);
+                        if (isset($result['has_warnings']) && $result['has_warnings']) {
+                            session()->flash('import_warnings', $result['warnings']);
+                        }
+
+                        if (isset($result['has_errors']) && $result['has_errors']) {
+                            session()->flash('import_errors', $result['errors']);
+                        }
+                    } elseif (in_array($ext, ['csv', 'xls', 'xlsx'])) {
+                        $import = new QuestionsImport($exam->id, $exam->isPersonality());
+                        Excel::import($import, $file);
+                    } else {
+                        // .doc (format lama) tidak bisa dibaca PHPWord, dan
+                        // ekstensi lain tidak dikenal — beri tahu pengguna.
+                        session()->flash('error', 'Format file tidak didukung. Gunakan .docx untuk Word, atau .xlsx/.xls/.csv untuk Excel.');
                     }
-                } else {
-                    $import = new QuestionsImport($exam->id, $exam->isPersonality());
-                    Excel::import($import, $file);
+                } catch (\Throwable $e) {
+                    // Jangan sampai import file menggagalkan pembuatan ujian
+                    // dengan error 500; laporkan sebagai pesan ramah.
+                    \Illuminate\Support\Facades\Log::error('Import gagal saat membuat ujian: ' . $e->getMessage());
+                    session()->flash('error', 'Gagal mengimport soal: ' . $e->getMessage());
                 }
             }
 
@@ -535,12 +549,25 @@ class ExamController extends Controller
 
     public function storeImport(Request $request, Exam $exam)
     {
+        // Validasi berbasis ukuran + ekstensi (bukan mimes/mimetypes) agar tidak
+        // bergantung pada ekstensi fileinfo di server (jika tidak terpasang,
+        // rule mimes/mimetypes bisa melempar exception -> error 500).
         $request->validate([
-            'file' => 'required|mimes:csv,xls,xlsx',
+            'file' => 'required|file|max:20480', // maks 20 MB
         ]);
 
-        $import = new QuestionsImport($exam->id, $exam->isPersonality());
-        Excel::import($import, $request->file('file'));
+        $extension = strtolower($request->file('file')->getClientOriginalExtension());
+        if (!in_array($extension, ['csv', 'xls', 'xlsx'])) {
+            return redirect()->back()->with('error', 'File harus berupa Excel (.xlsx, .xls, atau .csv).');
+        }
+
+        try {
+            $import = new QuestionsImport($exam->id, $exam->isPersonality());
+            Excel::import($import, $request->file('file'));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Import Excel gagal: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Gagal mengimport file Excel: ' . $e->getMessage());
+        }
 
         return redirect()->route('admin.exams.show', $exam->id);
     }
@@ -555,12 +582,27 @@ class ExamController extends Controller
 
     public function storeImportWord(Request $request, Exam $exam)
     {
+        // Validasi berbasis ukuran + ekstensi (bukan mimetypes) supaya tidak
+        // bergantung pada ekstensi fileinfo di server — jika fileinfo tidak
+        // terpasang, rule mimetypes justru melempar exception (error 500).
         $request->validate([
-            'file' => 'required|mimetypes:application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'file' => 'required|file|max:20480', // maks 20 MB
         ]);
 
-        $import = new QuestionsWordImport($exam->id, $exam->isPersonality());
-        $result = $import->import($request->file('file'));
+        $extension = strtolower($request->file('file')->getClientOriginalExtension());
+        // Hanya .docx: PHPWord tidak bisa membaca format .doc lama.
+        if ($extension !== 'docx') {
+            return redirect()->back()->with('error', 'File harus berupa dokumen Word (.docx).');
+        }
+
+        try {
+            $import = new QuestionsWordImport($exam->id, $exam->isPersonality());
+            $result = $import->import($request->file('file'));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Import Word gagal: ' . $e->getMessage());
+            return redirect()->route('admin.exams.show', $exam->id)
+                ->with('error', 'Gagal mengimport file Word: ' . $e->getMessage());
+        }
 
         if ($result['success']) {
             if (isset($result['undetected_answers']) && !empty($result['undetected_answers'])) {
@@ -635,9 +677,16 @@ class ExamController extends Controller
     }
     public function uploadImage(\Illuminate\Http\Request $request)
     {
+        // Ekstensi dicek manual (bukan rule mimes) agar tidak bergantung pada
+        // ekstensi fileinfo di server.
         $request->validate([
-            'file' => 'required|image|mimes:jpeg,jpg,png,gif,webp,bmp|max:5120',
+            'file' => 'required|file|max:5120',
         ]);
+
+        $extension = strtolower($request->file('file')->getClientOriginalExtension());
+        if (!in_array($extension, ['jpeg', 'jpg', 'png', 'gif', 'webp', 'bmp'])) {
+            return response()->json(['error' => 'Format gambar tidak didukung.'], 422);
+        }
 
         $url = \App\Helpers\ImageConverter::convertUploadedFile(
             $request->file('file'),

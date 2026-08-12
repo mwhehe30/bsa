@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Student;
 
+use App\Helpers\TimeNoticeMessage;
 use App\Models\Student;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -30,6 +31,12 @@ class LoginController extends Controller
             'email'     => 'required|email',
             'password'  => 'required',
             'otp'       => ['required', 'digits:6'],
+        ], [
+            'email.required' => 'Email wajib diisi.',
+            'email.email'    => 'Format email tidak valid.',
+            'password.required' => 'Password wajib diisi.',
+            'otp.required'   => 'Kode OTP wajib diisi.',
+            'otp.digits'     => 'Kode OTP harus 6 digit.',
         ]);
 
         // Rate limiting per email (bukan per IP) - allow multiple students dari IP yang sama
@@ -37,10 +44,12 @@ class LoginController extends Controller
         
         if (RateLimiter::tooManyAttempts($rateLimitKey, 5)) {
             $seconds = RateLimiter::availableIn($rateLimitKey);
-            $minutes = ceil($seconds / 60);
-            
+
             return redirect()->back()->withErrors([
-                'email' => "Terlalu banyak percobaan login gagal untuk email ini. Silakan coba lagi dalam {$minutes} menit."
+                'email' => TimeNoticeMessage::retryAt(
+                    'Terlalu banyak percobaan login gagal untuk email ini',
+                    $seconds,
+                ),
             ])->withInput($request->only('email'));
         }
 

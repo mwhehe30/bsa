@@ -25,75 +25,19 @@ class KecermatanStudentController extends Controller
     }
 
     /**
-     * Display list of available exams
+     * Kembalikan CSRF token terbaru untuk sesi yang sedang berjalan.
+     *
+     * Dipanggil frontend saat request POST ditolak dengan status 419
+     * (CSRF token mismatch), misalnya karena halaman ujian sempat disajikan
+     * dari cache CDN/proxy sehingga token di meta tag sudah basi. Endpoint ini
+     * sengaja GET (tidak butuh CSRF) dan berlabel no-store supaya tidak pernah
+     * ikut ter-cache dengan token lama.
      */
-    public function index(Request $request): Response
+    public function csrfToken(): \Illuminate\Http\JsonResponse
     {
-        $studentId = auth()->guard('student')->id();
-
-        // Get exams dengan lesson "Kecermatan"
-        $exams = \App\Models\Exam::whereHas('lesson', function($query) {
-                $query->where('name', 'LIKE', '%Kecermatan%');
-            })
-            ->orderBy('created_at', 'desc')
-            ->get()
-            ->map(function ($exam) use ($studentId) {
-                // Get or create kecermatan_exam
-                $kecermatanExam = KecermatanExam::firstOrCreate([
-                    'exam_id' => $exam->id
-                ], [
-                    'title' => $exam->title,
-                    'duration' => $exam->duration,
-                    'is_active' => true,
-                    'created_by' => $exam->created_by
-                ]);
-
-                $session = $kecermatanExam->sessions()->where('student_id', $studentId)->first();
-
-                $status = 'available';
-                $statusInfo = null;
-                $canStart = true;
-
-                if (!$exam->is_active || !$kecermatanExam->is_active) {
-                    $status = 'unavailable';
-                    $canStart = false;
-                } elseif ($session) {
-                    if ($session->status === 'in_progress') {
-                        $status = 'in_progress';
-                        $statusInfo = [
-                            'current_column' => $session->current_column,
-                            'current_question' => $session->current_question,
-                            'progress' => $session->progress_percentage,
-                        ];
-                    } elseif ($session->status === 'completed') {
-                        $status = 'completed';
-                        $statusInfo = [
-                            'score' => $session->total_score,
-                        ];
-                        $canStart = false;
-                    }
-                }
-
-                return [
-                    'id' => $kecermatanExam->id,
-                    'title' => $exam->title,
-                    'duration' => $exam->duration,
-                    'status' => $status,
-                    'status_info' => $statusInfo,
-                    'can_start' => $canStart,
-                    'session_id' => $session ? $session->id : null,
-                ];
-            });
-
-        // Filter by status
-        if ($request->has('filter') && $request->filter !== 'all') {
-            $exams = $exams->where('status', $request->filter)->values();
-        }
-
-        return Inertia::render('Student/Kecermatan/Index', [
-            'exams' => $exams,
-            'filter' => $request->filter ?? 'all',
-        ]);
+        // Header no-store ditambahkan otomatis oleh middleware global
+        // PreventPageCache, jadi tidak perlu di-set manual di sini.
+        return response()->json(['csrf_token' => csrf_token()]);
     }
 
     /**
@@ -555,7 +499,8 @@ class KecermatanStudentController extends Controller
                 'correct_count'    => $result['correct_count'],
                 'wrong_count'      => $result['wrong_count'],
                 'unanswered_count' => $result['unanswered_count'],
-                'time_spent'       => $result['time_spent'],
+                // Kolom yang selesai melalui timeout selalu berdurasi 60 detik.
+                'time_spent'       => 60,
             ]
         );
 
@@ -575,14 +520,14 @@ class KecermatanStudentController extends Controller
             ]);
         } else {
             // Exam completed
-            return $this->finishExam($session);
+            return $this->finishExam($session, true);
         }
     }
 
     /**
      * Finish exam
      */
-    private function finishExam(KecermatanSession $session)
+    private function finishExam(KecermatanSession $session, bool $currentColumnCompleted = false)
     {
         // Idempotent: request ganda tidak perlu menghitung dan mengubah sesi lagi.
         if ($session->status === 'completed') {
@@ -593,8 +538,23 @@ class KecermatanStudentController extends Controller
         // finalisasinya gagal di background (mis. koneksi putus) tetap dihitung
         // di sini agar total hasil akhir selalu lengkap. updateOrCreate dipakai
         // agar aman terhadap request ganda (forceFinish berjalan tanpa lock).
+        $currentColumn = (int) $session->current_column;
+        $activeColumnDuration = $session->column_start_time
+            ? min(60, max(0, now()->timestamp - $session->column_start_time->timestamp))
+            : 0;
+
         for ($col = 1; $col <= 10; $col++) {
             $result = $this->generator->calculateColumnResult($session->id, $col);
+
+            if ($col < $currentColumn || ($col === $currentColumn && $currentColumnCompleted)) {
+                $columnDuration = 60;
+            } elseif ($col === $currentColumn) {
+                // Ujian berhenti di kolom aktif (misalnya pelanggaran ke-3).
+                $columnDuration = $activeColumnDuration;
+            } else {
+                // Kolom setelah titik berhenti tidak pernah dikerjakan.
+                $columnDuration = 0;
+            }
 
             KecermatanResult::updateOrCreate(
                 [
@@ -606,7 +566,7 @@ class KecermatanStudentController extends Controller
                     'correct_count' => $result['correct_count'],
                     'wrong_count' => $result['wrong_count'],
                     'unanswered_count' => $result['unanswered_count'],
-                    'time_spent' => $result['time_spent'],
+                    'time_spent' => $columnDuration,
                 ]
             );
         }
@@ -646,6 +606,10 @@ class KecermatanStudentController extends Controller
     {
         $validated = $request->validate([
             'column_number' => 'required|integer|min:1|max:10',
+            'answers' => 'sometimes|array|max:500',
+            'answers.*.question_id' => 'required|integer|exists:kecermatan_questions,id',
+            'answers.*.answer' => 'required|in:A,B,C,D,E',
+            'answers.*.time_spent' => 'required|integer|min:0',
         ]);
 
         if ($session->student_id !== auth()->guard('student')->id()) {
@@ -663,11 +627,20 @@ class KecermatanStudentController extends Controller
 
         // Lock sesi agar dua request timeout/finalisasi tidak memproses kolom
         // yang sama secara bersamaan.
-        $freshSession = DB::transaction(function () use ($session, $columnNumber) {
+        $pendingAnswers = $validated['answers'] ?? [];
+
+        $freshSession = DB::transaction(function () use ($session, $columnNumber, $pendingAnswers) {
             $lockedSession = KecermatanSession::query()
                 ->whereKey($session->id)
                 ->lockForUpdate()
                 ->firstOrFail();
+
+            // Simpan jawaban yang masih tertahan di browser dalam transaksi yang
+            // sama dengan finalisasi. Dengan begitu hasil tidak pernah dihitung
+            // sebelum jawaban terakhir benar-benar masuk ke database.
+            if ($lockedSession->status !== 'completed' && !empty($pendingAnswers)) {
+                $this->savePendingAnswers($lockedSession->id, $pendingAnswers);
+            }
 
             // Request duplikat setelah ujian selesai cukup dianggap berhasil.
             if ($lockedSession->status === 'completed') {
@@ -718,18 +691,63 @@ class KecermatanStudentController extends Controller
     }
 
     /**
+     * Simpan sisa jawaban yang masih tertahan di browser ke database. Dipanggil
+     * dari columnTimeout dan forceFinish di dalam transaksi yang sama dengan
+     * perhitungan hasil, agar hasil tidak pernah dihitung sebelum jawaban
+     * terakhir benar-benar tersimpan.
+     *
+     * @param  int  $sessionId
+     * @param  array<int, array{question_id:int, answer:string, time_spent:int}>  $answers
+     */
+    private function savePendingAnswers(int $sessionId, array $answers): void
+    {
+        if (empty($answers)) {
+            return;
+        }
+
+        $questions = KecermatanQuestion::query()
+            ->where('session_id', $sessionId)
+            ->whereIn('id', collect($answers)->pluck('question_id'))
+            ->get()
+            ->keyBy('id');
+
+        if ($questions->count() !== count($answers)) {
+            abort(422, 'Terdapat jawaban yang tidak sesuai dengan sesi ujian.');
+        }
+
+        foreach ($answers as $answer) {
+            $question = $questions->get($answer['question_id']);
+            $question->update([
+                'student_answer' => $answer['answer'],
+                'is_correct' => $question->correct_answer === $answer['answer'],
+                'time_spent' => $answer['time_spent'],
+                'answered_at' => now(),
+            ]);
+        }
+    }
+
+    /**
      * Force finish exam (auto-submit due to max violations)
      */
-    public function forceFinish(KecermatanSession $session)
+    public function forceFinish(Request $request, KecermatanSession $session)
     {
+        $validated = $request->validate([
+            'answers' => 'sometimes|array|max:500',
+            'answers.*.question_id' => 'required|integer|exists:kecermatan_questions,id',
+            'answers.*.answer' => 'required|in:A,B,C,D,E',
+            'answers.*.time_spent' => 'required|integer|min:0',
+        ]);
+
         // Verify ownership
         if ($session->student_id !== auth()->guard('student')->id()) {
             abort(403, 'Unauthorized');
         }
 
+        $pendingAnswers = $validated['answers'] ?? [];
+
         // Transaction + lock: serialkan dengan columnTimeout agar dua proses
         // tidak menghitung/menulis hasil secara bersamaan.
-        return DB::transaction(function () use ($session) {
+        return DB::transaction(function () use ($session, $pendingAnswers) {
             $lockedSession = KecermatanSession::query()
                 ->whereKey($session->id)
                 ->lockForUpdate()
@@ -738,6 +756,13 @@ class KecermatanStudentController extends Controller
             // Skip if already completed
             if ($lockedSession->status === 'completed') {
                 return redirect()->route('student.kecermatan.result', $lockedSession->id);
+            }
+
+            // Simpan sisa jawaban yang masih tertahan di browser dalam transaksi
+            // yang sama dengan finalisasi. Hasil tidak pernah dihitung sebelum
+            // jawaban terakhir benar-benar masuk ke database.
+            if (!empty($pendingAnswers)) {
+                $this->savePendingAnswers($lockedSession->id, $pendingAnswers);
             }
 
             // Simpan/update hasil untuk semua kolom (kolom aktif + kolom setelahnya)
@@ -966,7 +991,7 @@ class KecermatanStudentController extends Controller
                 'correct' => $result->correct_count,
                 'wrong' => $result->wrong_count,
                 'unanswered' => $result->unanswered_count,
-                'time_spent' => $result->time_spent,
+                'time_spent' => min(60, (int) $result->time_spent),
             ];
         })->sortBy('column')->values();
 

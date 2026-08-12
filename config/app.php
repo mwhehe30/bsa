@@ -69,6 +69,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Display Timezone (User-Facing Clock)
+    |--------------------------------------------------------------------------
+    |
+    | Zona waktu untuk jam yang DITAMPILKAN ke pengguna pada pesan berbasis
+    | waktu (mis. jam di pesan rate limit / batas berlaku OTP). Bisa berbeda
+    | dari 'timezone' (zona internal server). Default Asia/Jakarta (WIB);
+    | untuk WITA gunakan 'Asia/Makassar', untuk WIT 'Asia/Jayapura'.
+    |
+    */
+
+    'display_timezone' => env('APP_TIMEZONE_DISPLAY', 'Asia/Jakarta'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Locale Configuration
     |--------------------------------------------------------------------------
     |

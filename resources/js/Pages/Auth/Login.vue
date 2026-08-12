@@ -160,6 +160,15 @@
 
                         <!-- Student Login -->
                         <div v-show="activeTab === 'student'">
+                            <!-- Pesan info alur OTP siswa (mis. OTP masih valid) -->
+                            <div
+                                v-if="$page.props.session.info"
+                                class="alert alert-info mt-2"
+                            >
+                                <i class="fa fa-info-circle me-1"></i>
+                                {{ $page.props.session.info }}
+                            </div>
+
                             <div v-if="!showOtpForm">
                                 <form @submit.prevent="sendOtp">
                                     <div class="form-group mb-4">
@@ -291,6 +300,17 @@
                                     <strong>{{ studentForm.email }}</strong>
                                 </div>
 
+                                <!-- Error tingkat form (mis. rate limit login) —
+                                     ditampilkan juga di langkah OTP karena di sinilah
+                                     siswa berada saat submit login ditolak. -->
+                                <div
+                                    v-if="errors.email"
+                                    class="alert alert-danger mb-4"
+                                >
+                                    <i class="fa fa-exclamation-circle me-1"></i>
+                                    {{ errors.email }}
+                                </div>
+
                                 <form @submit.prevent="submitStudent">
                                     <div class="form-group mb-4">
                                         <label for="student-otp"
@@ -311,7 +331,6 @@
                                                     :class="{
                                                         'is-invalid': otpError,
                                                     }"
-                                                    maxlength="1"
                                                     v-model="otpDigits[index]"
                                                     @input="
                                                         onOtpDigitInput(
@@ -404,7 +423,7 @@
                                     <button
                                         type="button"
                                         class="btn btn-link text-muted"
-                                        @click="showOtpForm = false"
+                                        @click="backToEmailForm"
                                     >
                                         <i class="fa fa-chevron-left me-1"></i>
                                         Ganti Email
@@ -413,12 +432,6 @@
                             </div>
                         </div>
 
-                        <div class="mt-3 text-center">
-                            <a href="/" class="text-decoration-none text-muted">
-                                <i class="fa fa-chevron-left me-1"></i> Kembali
-                                ke Beranda
-                            </a>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -436,6 +449,41 @@ import {
     onMounted,
     onBeforeUnmount,
 } from "vue";
+
+// Draft kredensial alur OTP disimpan di sessionStorage (hanya hidup selama
+// tab terbuka). Ini membuat langkah form OTP tahan terhadap re-mount/reload
+// komponen oleh Inertia — state lokal Vue (studentForm, showOtpForm) tidak
+// selalu dipertahankan setelah server membalas redirect, sehingga tanpa draft
+// ini email/password bisa hilang dan login gagal dengan "Email wajib diisi".
+const OTP_DRAFT_KEY = "otp_login_draft";
+
+const saveOtpDraft = (email, password) => {
+    try {
+        sessionStorage.setItem(
+            OTP_DRAFT_KEY,
+            JSON.stringify({ email, password }),
+        );
+    } catch {
+        // Storage tidak tersedia (mis. mode privat) — abaikan.
+    }
+};
+
+const loadOtpDraft = () => {
+    try {
+        const raw = sessionStorage.getItem(OTP_DRAFT_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+};
+
+const clearOtpDraft = () => {
+    try {
+        sessionStorage.removeItem(OTP_DRAFT_KEY);
+    } catch {
+        // abaikan
+    }
+};
 
 export default {
     components: {
@@ -470,6 +518,15 @@ export default {
         const otpCooldown = ref(0);
         let cooldownInterval = null;
 
+        // Pulihkan draft login OTP bila komponen ter-mount ulang (mis. setelah
+        // navigasi/redirect Inertia) atau halaman di-refresh saat OTP berjalan.
+        const draft = loadOtpDraft();
+        if (draft?.email) {
+            studentForm.email = draft.email;
+            studentForm.password = draft.password ?? "";
+            showOtpForm.value = true;
+        }
+
         const emailError = ref("");
         const passwordError = ref("");
         const otpError = ref("");
@@ -477,6 +534,11 @@ export default {
         // Browser autofill kadang mengisi tampilan input tanpa memicu event input Vue.
         // Fungsi ini membaca nilai DOM dan menyinkronkannya ke state reactive.
         const syncStudentCredentials = () => {
+            // Hanya sinkronkan saat form email/password benar-benar tampil.
+            // Ketika form OTP sedang ditampilkan, input tersebut sudah tidak ada
+            // di DOM — membaca null akan MENGHAPUS kredensial dari state.
+            if (!emailInput.value || !passwordInput.value) return;
+
             const emailValue = emailInput.value?.value ?? "";
             const passwordValue = passwordInput.value?.value ?? "";
 
@@ -573,11 +635,17 @@ export default {
 
             otpLoading.value = true;
 
+            // Simpan draft SEBELUM request dikirim: jika komponen ter-mount ulang
+            // saat respons diproses (state lokal hilang), nilai email/password dan
+            // langkah OTP tetap bisa dipulihkan dari sessionStorage.
+            saveOtpDraft(studentForm.email, studentForm.password);
+
             router.post(
                 "/student/send-otp",
                 { email: studentForm.email, password: studentForm.password },
                 {
                     preserveScroll: true,
+                    preserveState: true,
                     onSuccess: () => {
                         otpLoading.value = false;
                         showOtpForm.value = true;
@@ -588,6 +656,9 @@ export default {
                     },
                     onError: () => {
                         otpLoading.value = false;
+                        // OTP tidak terkirim — buang draft agar form OTP tidak
+                        // muncul tanpa kode OTP saat halaman dimuat ulang.
+                        clearOtpDraft();
                     },
                 },
             );
@@ -604,6 +675,9 @@ export default {
                 { email: studentForm.email, password: studentForm.password },
                 {
                     preserveScroll: true,
+                    // Sama seperti sendOtp: cegah komponen di-mount ulang yang
+                    // akan mengembalikan pengguna ke langkah email/password.
+                    preserveState: true,
                     onSuccess: () => {
                         startCooldown();
                         nextTick(() => {
@@ -614,8 +688,41 @@ export default {
             );
         };
 
+        const fillOtpDigits = (rawValue, startIndex = 0) => {
+            const digits = String(rawValue || "")
+                .replace(/\D/g, "")
+                .slice(0, 6);
+
+            if (!digits) return false;
+
+            const nextDigits = [...otpDigits.value];
+            const availableLength = Math.max(0, 6 - startIndex);
+            const digitsToApply = digits.slice(0, availableLength);
+
+            for (let i = 0; i < digitsToApply.length; i++) {
+                nextDigits[startIndex + i] = digitsToApply[i];
+            }
+
+            otpDigits.value = nextDigits;
+
+            const focusIndex = Math.min(startIndex + digitsToApply.length, 5);
+            nextTick(() => {
+                otpRefs.value[focusIndex]?.focus();
+                checkAndSubmitOtp();
+            });
+
+            return true;
+        };
+
         const onOtpDigitInput = (e, index) => {
             const val = e.target.value.replace(/\D/g, "");
+
+            if (val.length > 1) {
+                e.target.value = val[0] || "";
+                fillOtpDigits(val, index);
+                return;
+            }
+
             otpDigits.value[index] = val;
 
             if (val) {
@@ -637,18 +744,11 @@ export default {
 
         const onOtpPaste = (e) => {
             e.preventDefault();
-            const pasteData = e.clipboardData
-                .getData("text")
-                .replace(/\D/g, "")
-                .slice(0, 6);
-            if (pasteData) {
-                for (let i = 0; i < pasteData.length; i++) {
-                    otpDigits.value[i] = pasteData[i];
-                }
-                const focusIndex = pasteData.length < 6 ? pasteData.length : 5;
-                otpRefs.value[focusIndex]?.focus();
-                checkAndSubmitOtp();
-            }
+            const pasteData = e.clipboardData?.getData("text") || "";
+            const activeIndex = otpRefs.value.findIndex(
+                (input) => input === e.target,
+            );
+            fillOtpDigits(pasteData, activeIndex >= 0 ? activeIndex : 0);
         };
 
         const checkAndSubmitOtp = () => {
@@ -664,6 +764,9 @@ export default {
         const submitAdmin = () => {
             adminLoading.value = true;
             router.post("/admin/login", adminForm, {
+                // Jaga nilai email/password tetap terisi saat server membalas
+                // error (redirect balik ke halaman login) agar tidak terhapus.
+                preserveState: true,
                 onFinish: () => {
                     adminLoading.value = false;
                 },
@@ -686,6 +789,15 @@ export default {
 
             studentLoading.value = true;
             router.post("/student/login", studentForm, {
+                // Jaga state komponen (email/password/OTP/langkah) tetap utuh
+                // saat server membalas error, mis. karena rate limit.
+                preserveState: true,
+                onSuccess: () => {
+                    studentLoading.value = false;
+                    // Login berhasil — hapus draft agar tidak terbawa saat
+                    // logout lalu login lagi dengan akun yang berbeda.
+                    clearOtpDraft();
+                },
                 onFinish: () => {
                     studentLoading.value = false;
                 },
@@ -699,6 +811,12 @@ export default {
                     }
                 },
             });
+        };
+
+        // Kembali ke langkah email/password dan buang draft alur OTP.
+        const backToEmailForm = () => {
+            clearOtpDraft();
+            showOtpForm.value = false;
         };
 
         return {
@@ -728,6 +846,7 @@ export default {
             submitStudent,
             sendOtp,
             resendOtp,
+            backToEmailForm,
         };
     },
 };
@@ -908,10 +1027,6 @@ input.text-center {
         padding: 10px 12px;
     }
 
-    .mt-3 a {
-        font-size: 13px;
-    }
-
     small.text-muted {
         font-size: 12px;
     }
@@ -1077,7 +1192,7 @@ input.text-center {
 }
 
 .otp-box:focus {
-    border-color: #4f46e5 !important;
+    border-color: #1A2332 !important;
     box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1) !important;
 }
 

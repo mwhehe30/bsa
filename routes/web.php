@@ -6,6 +6,14 @@ use Illuminate\Support\Facades\Hash;
 // Aplikasi langsung membuka halaman login.
 Route::redirect('/', '/login')->name('home');
 
+// CSRF token terbaru untuk sesi ini — route PUBLIK (tanpa auth) karena
+// dipakai recovery 419 di halaman login yang belum terautentikasi. Endpoint
+// ini berlabel no-store (middleware web global) dan responsnya otomatis
+// mengirim ulang cookie sesi + XSRF-TOKEN yang segar.
+Route::get('/csrf-token', function () {
+    return response()->json(['csrf_token' => csrf_token()]);
+})->name('csrfToken');
+
 // Route Test UI Kecermatan (Inertia Vue) - hanya untuk pengembangan lokal
 if (app()->environment('local')) {
     Route::get('/test', function () {
@@ -36,8 +44,13 @@ Route::prefix('admin')->group(function () {
     // Admin Login - Rate limiting per email (bukan per IP)
     Route::post('/login', \App\Http\Controllers\Auth\AdminLoginController::class)->name('admin.login');
 
-    //middleware "auth"
+    //middleware "auth" (no-store kini dipasang global di web group)
     Route::group(['middleware' => ['auth']], function () {
+
+        // CSRF token terbaru untuk sesi admin (dipakai frontend saat 419)
+        Route::get('/csrf-token', function () {
+            return response()->json(['csrf_token' => csrf_token()]);
+        })->name('admin.csrfToken');
 
         //route dashboard
         Route::get('/dashboard', App\Http\Controllers\Admin\DashboardController::class)->name('admin.dashboard');
@@ -132,8 +145,13 @@ Route::post('/student/logout', function () {
 Route::prefix('student')->group(function () {
     Route::redirect('/', '/student/dashboard');
 
-    //middleware "student"
-    Route::group(['middleware' => 'student'], function () {
+    //middleware "student" (no-store kini dipasang global di web group)
+    Route::group(['middleware' => ['student']], function () {
+
+        // CSRF token terbaru untuk sesi siswa (dipakai frontend saat 419)
+        Route::get('/csrf-token', function () {
+            return response()->json(['csrf_token' => csrf_token()]);
+        })->name('student.csrfToken');
 
         //route dashboard
         Route::get('/dashboard', App\Http\Controllers\Student\DashboardController::class)->name('student.dashboard');
@@ -156,6 +174,11 @@ Route::prefix('student')->group(function () {
         Route::get('/exam-security/check-status', [App\Http\Controllers\Student\ExamSecurityController::class, 'checkStatus'])->name('student.exam.checkStatus');
 
         // Kecermatan (Tes Kecermatan)
+
+        // Endpoint pengambilan CSRF token terbaru untuk sesi ini.
+        // GET (tidak butuh CSRF) dan tidak pernah di-cache; dipakai frontend
+        // untuk memulihkan diri saat request POST ditolak 419.
+        Route::get('/kecermatan/csrf-token', [\App\Http\Controllers\Student\KecermatanStudentController::class, 'csrfToken'])->name('student.kecermatan.csrfToken');
 
         Route::get('/kecermatan/{exam}/select-type', [\App\Http\Controllers\Student\KecermatanStudentController::class, 'selectType'])->name('student.kecermatan.selectType');
         Route::post('/kecermatan/{exam}/start', [\App\Http\Controllers\Student\KecermatanStudentController::class, 'startExam'])->name('student.kecermatan.start');

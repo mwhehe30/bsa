@@ -232,14 +232,35 @@ class KecermatanController extends Controller
             $chartData['wrong'][] = $result->wrong_count;
         }
 
-        // Detail per kolom
-        $columnDetails = $session->results->map(function ($result) {
+        // Detail durasi mengikuti progres sesi, termasuk sesi lama yang selesai
+        // karena pelanggaran sebelum mencapai kolom 10.
+        $stoppedByViolation = (int) $session->violation_count >= 3;
+        $currentColumn = (int) $session->current_column;
+
+        $columnDetails = $session->results->map(function ($result) use (
+            $stoppedByViolation,
+            $currentColumn
+        ) {
+            if ($stoppedByViolation) {
+                if ($result->column_number < $currentColumn) {
+                    $duration = 60;
+                } elseif ($result->column_number === $currentColumn) {
+                    // Gunakan nilai yang disimpan saat ujian dihentikan agar
+                    // laporan admin identik dengan hasil yang dilihat siswa.
+                    $duration = min(60, (int) $result->time_spent);
+                } else {
+                    $duration = 0;
+                }
+            } else {
+                $duration = min(60, (int) $result->time_spent);
+            }
+
             return [
                 'column' => $result->column_number,
                 'correct' => $result->correct_count,
                 'wrong' => $result->wrong_count,
                 'unanswered' => $result->unanswered_count,
-                'time_spent' => $result->time_spent,
+                'time_spent' => $duration,
             ];
         })->sortBy('column')->values();
 

@@ -34,7 +34,7 @@
                         <hr />
                         <form @submit.prevent>
                             <div class="table-responsive mb-4">
-                                <table class="table-bordered table-centered table-nowrap mb-0 table rounded">
+                                <table class="admin-form-table table-bordered table-centered mb-0 table rounded">
                                     <tbody>
                                         <tr>
                                             <td style="width: 20%" class="fw-bold">Soal</td>
@@ -141,6 +141,7 @@ import { Head, Link, router } from '@inertiajs/vue3';
 import { reactive, computed } from 'vue';
 import Swal from 'sweetalert2';
 import Editor from '@tinymce/tinymce-vue';
+import { getXsrfToken, refreshCsrfToken } from '../../../utils/csrf';
 
 export default {
     layout: LayoutAdmin,
@@ -162,10 +163,6 @@ export default {
             return normalized === 'kepribadian' || normalized.startsWith('kepribadian ');
         });
 
-        // Ambil CSRF token dari meta tag yang disisipkan Laravel
-        const getCsrfToken = () =>
-            document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '';
-
         /**
          * Konfigurasi TinyMCE dengan dukungan upload gambar dari laptop.
          * Klik icon gambar → pilih file dari laptop → otomatis upload ke server
@@ -183,44 +180,65 @@ export default {
             automatic_uploads: true,
             images_reuse_filename: false,
             file_picker_types: 'image',
-            // Handler custom: kirim CSRF token agar Laravel tidak tolak request
+            // Handler custom: kirim CSRF token agar Laravel tidak tolak request.
+            // Jika ditolak 419 (token basi), refresh token dari server lalu
+            // ulangi upload sekali dengan token baru.
             images_upload_handler: (blobInfo, progress) =>
                 new Promise((resolve, reject) => {
-                    const formData = new FormData();
-                    formData.append('file', blobInfo.blob(), blobInfo.filename());
+                    let retried = false;
 
-                    const xhr = new XMLHttpRequest();
-                    xhr.open('POST', '/admin/upload-image');
-                    xhr.setRequestHeader('X-CSRF-TOKEN', getCsrfToken());
-                    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+                    const attemptUpload = () => {
+                        const formData = new FormData();
+                        formData.append('file', blobInfo.blob(), blobInfo.filename());
 
-                    xhr.upload.onprogress = (e) => {
-                        if (e.lengthComputable) {
-                            progress(Math.round((e.loaded / e.total) * 100));
-                        }
-                    };
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', '/admin/upload-image');
+                        // Cookie XSRF-TOKEN selalu segar (dikirim ulang tiap respons).
+                        xhr.setRequestHeader('X-XSRF-TOKEN', getXsrfToken());
+                        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
 
-                    xhr.onload = () => {
-                        if (xhr.status < 200 || xhr.status >= 300) {
-                            reject({ message: 'Upload gagal: HTTP ' + xhr.status, remove: true });
-                            return;
-                        }
-                        try {
-                            const json = JSON.parse(xhr.responseText);
-                            if (!json.location) {
-                                reject({ message: 'Respon tidak valid dari server', remove: true });
+                        xhr.upload.onprogress = (e) => {
+                            if (e.lengthComputable) {
+                                progress(Math.round((e.loaded / e.total) * 100));
+                            }
+                        };
+
+                        xhr.onload = () => {
+                            if (xhr.status === 419 && !retried) {
+                                retried = true;
+                                refreshCsrfToken('/admin/csrf-token', true).then((fresh) => {
+                                    if (fresh) {
+                                        // Cookie sudah diperbarui; ulangi upload.
+                                        attemptUpload();
+                                        return;
+                                    }
+                                    reject({ message: 'Upload gagal: HTTP ' + xhr.status, remove: true });
+                                });
                                 return;
                             }
-                            resolve(json.location);
-                        } catch {
-                            reject({ message: 'Gagal parsing respon server', remove: true });
-                        }
+                            if (xhr.status < 200 || xhr.status >= 300) {
+                                reject({ message: 'Upload gagal: HTTP ' + xhr.status, remove: true });
+                                return;
+                            }
+                            try {
+                                const json = JSON.parse(xhr.responseText);
+                                if (!json.location) {
+                                    reject({ message: 'Respon tidak valid dari server', remove: true });
+                                    return;
+                                }
+                                resolve(json.location);
+                            } catch {
+                                reject({ message: 'Gagal parsing respon server', remove: true });
+                            }
+                        };
+
+                        xhr.onerror = () =>
+                            reject({ message: 'Upload gagal (koneksi error)', remove: true });
+
+                        xhr.send(formData);
                     };
 
-                    xhr.onerror = () =>
-                        reject({ message: 'Upload gagal (koneksi error)', remove: true });
-
-                    xhr.send(formData);
+                    attemptUpload();
                 }),
             // Izinkan semua atribut HTML agar tag <img> tersimpan utuh
             valid_elements: '*[*]',

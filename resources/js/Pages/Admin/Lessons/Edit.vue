@@ -50,6 +50,23 @@
                                 </div>
                             </div>
 
+                            <div class="mb-4">
+                                <label class="form-label">Thumbnail Mapel</label>
+                                <input
+                                    type="file"
+                                    class="form-control"
+                                    accept="image/jpeg,image/png,image/webp"
+                                    @change="handleThumbnail"
+                                />
+                                <small class="text-muted">JPG, PNG, atau WebP. Maksimal 5 MB. Kosongkan jika tidak ingin mengganti gambar.</small>
+                                <div v-if="thumbnailPreview" class="lesson-thumbnail-preview mt-3">
+                                    <img :src="thumbnailPreview" alt="Preview thumbnail mapel" />
+                                </div>
+                                <div v-if="errors.thumbnail" class="alert alert-danger mt-2">
+                                    {{ errors.thumbnail }}
+                                </div>
+                            </div>
+
                             <button
                                 type="submit"
                                 class="btn btn-md btn-primary me-2 border-0 shadow"
@@ -73,7 +90,7 @@
 <script>
 import LayoutAdmin from '../../../Layouts/Admin.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
-import { reactive } from 'vue';
+import { reactive, ref } from 'vue';
 import Swal from 'sweetalert2';
 
 export default {
@@ -87,10 +104,33 @@ export default {
         const form = reactive({
             name: props.lesson.name,
             category: props.lesson.category,
+            thumbnail: null,
         });
 
+        const thumbnailPreview = ref(props.lesson.thumbnail_url || null);
+
+        const handleThumbnail = (event) => {
+            const file = event.target.files?.[0] || null;
+            form.thumbnail = file;
+
+            if (!file) {
+                thumbnailPreview.value = props.lesson.thumbnail_url || null;
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (loadEvent) => {
+                thumbnailPreview.value = loadEvent.target?.result || null;
+            };
+            reader.readAsDataURL(file);
+        };
+
         const submit = () => {
-            router.put(`/admin/lessons/${props.lesson.id}`, form, {
+            router.post(`/admin/lessons/${props.lesson.id}`, {
+                ...form,
+                _method: 'put',
+            }, {
+                forceFormData: true,
                 onSuccess: () => {
                     Swal.fire({
                         title: 'Success!',
@@ -103,8 +143,23 @@ export default {
             });
         };
 
-        return { form, submit };
+        return { form, submit, thumbnailPreview, handleThumbnail };
     },
 };
 </script>
 
+<style scoped>
+.lesson-thumbnail-preview {
+    width: min(100%, 420px);
+    aspect-ratio: 16 / 7;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+}
+
+.lesson-thumbnail-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+</style>
