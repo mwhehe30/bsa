@@ -576,7 +576,14 @@ class ExamController extends Controller
         ];
 
         if ($exam->isMultipleChoice()) {
+            $answerChanged = (string) $question->answer !== (string) $request->answer;
+
             $data['answer'] = $request->answer;
+
+            if ($answerChanged) {
+                $data['needs_review'] = false;
+                $data['review_notes'] = null;
+            }
         }
 
         if ($exam->isPersonality()) {
