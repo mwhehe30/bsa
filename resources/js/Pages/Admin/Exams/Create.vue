@@ -109,6 +109,25 @@
                             <div v-if="errors.description" class="alert alert-danger mt-2">{{ errors.description }}</div>
                         </div>
 
+                        <div v-if="!selectedLessonIsKecermatan" class="mb-4">
+                            <label>File Pembahasan</label>
+                            <input
+                                type="file"
+                                ref="discussionFileInput"
+                                accept=".pdf,.docx"
+                                @change="handleDiscussionFileChange"
+                                class="form-control"
+                            />
+                            <small class="text-muted d-block mt-1">PDF atau Word (.docx). Siswa bisa download setelah ujian selesai.</small>
+                            <div v-if="errors.discussion_file" class="alert alert-danger mt-2">{{ errors.discussion_file }}</div>
+                            <div v-if="discussionFile" class="mt-2 d-flex align-items-center gap-2">
+                                <span class="badge bg-success"><i class="fa fa-file me-1"></i>{{ discussionFile.name }}</span>
+                                <button type="button" class="btn btn-sm btn-outline-danger" @click="clearDiscussionFile">
+                                    <i class="fa fa-times me-1"></i> Hapus
+                                </button>
+                            </div>
+                        </div>
+
                         <div class="row">
                             <div class="col-md-4">
                                 <div class="mb-4">
@@ -297,6 +316,8 @@ export default {
         const questions = ref([]);
         const importFile = ref(null);
         const importFileInput = ref(null);
+        const discussionFile = ref(null);
+        const discussionFileInput = ref(null);
         const isSubmitting = ref(false);
 
         const isPersonalityLesson = (name) => {
@@ -336,6 +357,7 @@ export default {
         watch(() => selectedLessonIsKecermatan.value, (isKecermatan) => {
             if (isKecermatan) {
                 form.duration = 10; // Default 10 menit untuk kecermatan
+                clearDiscussionFile();
             }
         });
 
@@ -355,6 +377,12 @@ export default {
         const clearImport = () => {
             importFile.value = null;
             if (importFileInput.value) importFileInput.value.value = '';
+        };
+
+        const handleDiscussionFileChange = (e) => { discussionFile.value = e.target.files[0] || null; };
+        const clearDiscussionFile = () => {
+            discussionFile.value = null;
+            if (discussionFileInput.value) discussionFileInput.value.value = '';
         };
 
         // ---- Submit ----
@@ -377,7 +405,12 @@ export default {
                 data.import_file = importFile.value;
             }
 
+            if (discussionFile.value && !selectedLessonIsKecermatan.value) {
+                data.discussion_file = discussionFile.value;
+            }
+
             router.post('/admin/exams', data, {
+                forceFormData: true,
                 onFinish: () => { isSubmitting.value = false; },
                 onError: () => { isSubmitting.value = false; },
             });
@@ -391,6 +424,7 @@ export default {
             });
             questions.value = [];
             clearImport();
+            clearDiscussionFile();
         };
 
         return {
@@ -400,6 +434,7 @@ export default {
             selectedLessonIsKecermatan,
             questions, addQuestion, removeQuestion,
             importFile, importFileInput, handleFileChange, clearImport,
+            discussionFile, discussionFileInput, handleDiscussionFileChange, clearDiscussionFile,
             isSubmitting, submit, resetAll,
         };
     },

@@ -86,6 +86,15 @@
                             </div>
                         </div>
 
+                        <div v-if="hasDiscussionFile" class="mt-4">
+                            <a
+                                :href="`/student/exam-result/${grade.id}/discussion`"
+                                class="btn-flat btn-flat-primary"
+                            >
+                                <i class="fa fa-download me-2"></i> Download Pembahasan
+                            </a>
+                        </div>
+
                     </div>
                 </div>
 
@@ -114,7 +123,18 @@ export default {
             return normalized === 'kepribadian' || normalized.startsWith('kepribadian ');
         });
 
-        return { isPersonality };
+        const isKecermatan = computed(() => {
+            const name = props.exam_group?.exam?.lesson?.name;
+            if (!name || typeof name !== 'string') return false;
+            const normalized = name.toLowerCase().trim();
+            return normalized === 'kecermatan' || normalized.startsWith('kecermatan ');
+        });
+
+        const hasDiscussionFile = computed(() => {
+            return !isKecermatan.value && Boolean(props.exam_group?.exam?.discussion_file_name);
+        });
+
+        return { isPersonality, hasDiscussionFile };
     },
 };
 </script>

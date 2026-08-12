@@ -11,6 +11,8 @@ class Exam extends Model
         'lesson_id',
         'duration',
         'description',
+        'discussion_file_path',
+        'discussion_file_name',
         'random_question',
         'random_answer',
         'show_answer',

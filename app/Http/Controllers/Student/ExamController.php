@@ -10,6 +10,7 @@ use App\Models\Question;
 use App\Models\ExamGroup;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\Storage;
 
 class ExamController extends Controller
 {
@@ -564,6 +565,30 @@ class ExamController extends Controller
             'grade' => $grade,
             'answers' => $answers,
         ]);
+    }
+
+    public function downloadDiscussion($grade_id)
+    {
+        $student = auth()->guard('student')->user();
+
+        $grade = Grade::where('id', $grade_id)
+            ->where('student_id', $student->id)
+            ->where('status', 'completed')
+            ->with('exam.lesson')
+            ->firstOrFail();
+
+        if ($grade->exam->isKecermatan() || !$grade->exam->discussion_file_path) {
+            abort(404);
+        }
+
+        if (!Storage::disk('local')->exists($grade->exam->discussion_file_path)) {
+            abort(404);
+        }
+
+        return Storage::disk('local')->download(
+            $grade->exam->discussion_file_path,
+            $grade->exam->discussion_file_name
+        );
     }
 
     /**

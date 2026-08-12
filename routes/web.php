@@ -164,6 +164,7 @@ Route::prefix('student')->group(function () {
         Route::post('/exam-answer', [App\Http\Controllers\Student\ExamController::class, 'answerQuestion'])->name('student.exams.answerQuestion');
         Route::post('/exam-end', [App\Http\Controllers\Student\ExamController::class, 'endExam'])->name('student.exams.endExam');
         Route::get('/exam-result/{grade_id}', [App\Http\Controllers\Student\ExamController::class, 'resultExam'])->name('student.exams.resultExam');
+        Route::get('/exam-result/{grade_id}/discussion', [App\Http\Controllers\Student\ExamController::class, 'downloadDiscussion'])->name('student.exams.downloadDiscussion');
 
         //route profile & change password
         Route::get('/profile', [App\Http\Controllers\Student\ProfileController::class, 'index'])->name('student.profile');

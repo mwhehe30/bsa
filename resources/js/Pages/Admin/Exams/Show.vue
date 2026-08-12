@@ -101,6 +101,31 @@
                         </div>
                         <hr />
 
+                        <form class="question-search mb-3" @submit.prevent="searchQuestions">
+                            <div class="input-group">
+                                <span class="input-group-text bg-white">
+                                    <i class="fa fa-search text-muted"></i>
+                                </span>
+                                <input
+                                    type="search"
+                                    class="form-control"
+                                    v-model="search"
+                                    placeholder="Cari soal, pilihan jawaban, atau kunci jawaban..."
+                                />
+                                <button class="btn btn-primary" type="submit">
+                                    Cari
+                                </button>
+                                <button
+                                    v-if="search"
+                                    class="btn btn-outline-secondary"
+                                    type="button"
+                                    @click="clearSearch"
+                                >
+                                    Reset
+                                </button>
+                            </div>
+                        </form>
+
                         <!-- Flash Messages -->
                         <div
                             v-if="$page.props.flash?.success"
@@ -307,10 +332,12 @@
                                     >
                                         <td class="question-number fw-bold text-center" data-label="No. Soal">
                                             {{
-                                                ++index +
-                                                (exam.questions.current_page -
-                                                    1) *
-                                                    exam.questions.per_page
+                                                question.original_number ||
+                                                (index +
+                                                    1 +
+                                                    (exam.questions.current_page -
+                                                        1) *
+                                                        exam.questions.per_page)
                                             }}
                                         </td>
                                         <td class="question-content" data-label="Soal">
@@ -428,8 +455,9 @@
                                             <i
                                                 class="fa fa-info-circle me-2"
                                             ></i>
-                                            Belum ada soal untuk ujian ini.
+                                            {{ search ? 'Soal tidak ditemukan.' : 'Belum ada soal untuk ujian ini.' }}
                                             <Link
+                                                v-if="!search && !exam.is_kecermatan"
                                                 :href="`/admin/exams/${exam.id}/questions/create`"
                                                 class="btn btn-sm btn-primary ms-2"
                                             >
@@ -471,11 +499,16 @@ export default {
         importErrors: Array,
         importWarnings: Array,
         undetectedAnswers: Array,
+        filters: {
+            type: Object,
+            default: () => ({ q: '', per_page: 5 }),
+        },
     },
     setup(props) {
         const importErrors = ref(props.importErrors || []);
         const importWarnings = ref(props.importWarnings || []);
         const undetectedAnswers = ref(props.undetectedAnswers || []);
+        const search = ref(props.filters?.q || '');
 
         const isPersonality = computed(() => {
             const name = props.exam?.lesson?.name;
@@ -562,10 +595,35 @@ export default {
             return points[option] || 0;
         };
 
+        const searchQuestions = () => {
+            router.get(`/admin/exams/${props.exam.id}`, {
+                q: search.value,
+                per_page: props.exam.questions?.per_page || props.filters?.per_page || 5,
+            }, {
+                preserveState: true,
+                preserveScroll: true,
+                replace: true,
+            });
+        };
+
+        const clearSearch = () => {
+            search.value = '';
+            router.get(`/admin/exams/${props.exam.id}`, {
+                per_page: props.exam.questions?.per_page || props.filters?.per_page || 5,
+            }, {
+                preserveState: true,
+                preserveScroll: true,
+                replace: true,
+            });
+        };
+
         return {
             destroy,
             resetQuestions,
             getPoint,
+            search,
+            searchQuestions,
+            clearSearch,
             isPersonality,
             importErrors,
             importWarnings,

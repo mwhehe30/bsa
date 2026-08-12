@@ -11,6 +11,8 @@ use App\Imports\QuestionsWordImport;
 use App\Services\KecermatanQuestionGenerator;
 use App\Http\Controllers\Controller;
 use Maatwebsite\Excel\Facades\Excel;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class ExamController extends Controller
 {
@@ -91,6 +93,7 @@ class ExamController extends Controller
             // Validasi berbasis ukuran saja (bukan mimes) agar tidak bergantung
             // pada fileinfo; ekstensi diperiksa manual di bawah.
             'import_file' => 'nullable|file|max:20480',
+            'discussion_file' => 'nullable|file',
         ]);
 
         // Check if lesson is Kecermatan
@@ -138,11 +141,15 @@ class ExamController extends Controller
                     ->with('success', 'Ujian kecermatan berhasil dibuat! 2000 soal otomatis telah digenerate.');
             }
 
+            $discussionFile = $this->storeDiscussionFile($request);
+
             $exam = Exam::create([
                 'title' => $request->title,
                 'lesson_id' => $request->lesson_id,
                 'duration' => $request->duration,
                 'description' => $request->description,
+                'discussion_file_path' => $discussionFile['path'],
+                'discussion_file_name' => $discussionFile['name'],
                 'random_question' => $request->random_question,
                 'random_answer' => $request->random_answer,
                 'show_answer' => $request->show_answer,
@@ -246,19 +253,30 @@ class ExamController extends Controller
                 $exam->questions_total = $kecermatanExam->masterQuestions()->count();
                 $exam->questions_needs_review = 0; // Kecermatan tidak ada review
 
+                $questionSearch = trim((string) request()->get('q', ''));
+
                 // Get master questions dengan paginasi
                 $kecermatanQuestions = $kecermatanExam->masterQuestions()
+                    ->when($questionSearch !== '', function ($query) use ($questionSearch) {
+                        $query->where(function ($q) use ($questionSearch) {
+                            $q->where('exam_type', 'like', '%' . $questionSearch . '%')
+                                ->orWhere('question_number', 'like', '%' . $questionSearch . '%')
+                                ->orWhere('column_number', 'like', '%' . $questionSearch . '%')
+                                ->orWhere('correct_answer', 'like', '%' . $questionSearch . '%');
+                        });
+                    })
                     ->orderBy('exam_type')
                     ->orderBy('column_number')
                     ->orderBy('id', 'ASC')
                     ->paginate($perPage);
                 
-                $kecermatanQuestions->appends(['per_page' => $perPage]);
+                $kecermatanQuestions->appends(['per_page' => $perPage, 'q' => $questionSearch]);
 
                 // Transform untuk compatibility dengan view
                 $questions = $kecermatanQuestions->through(function($q) {
                     return [
                         'id' => $q->id,
+                        'original_number' => $q->question_number,
                         'question' => 'Kolom ' . $q->column_number . ', Soal ' . $q->question_number,
                         'option_1' => 'A',
                         'option_2' => 'B',
@@ -279,6 +297,10 @@ class ExamController extends Controller
                     'importErrors' => [],
                     'importWarnings' => [],
                     'undetectedAnswers' => [],
+                    'filters' => [
+                        'q' => $questionSearch,
+                        'per_page' => $perPage,
+                    ],
                 ]);
             }
         }
@@ -295,8 +317,29 @@ class ExamController extends Controller
         $exam->questions_needs_review = $exam->questions()->where('needs_review', true)->count();
 
         // Soal dengan paginasi - diurutkan ASC
-        $questions = $exam->questions()->orderBy('id', 'ASC')->paginate($perPage);
-        $questions->appends(['per_page' => $perPage]);
+        $questionSearch = trim((string) request()->get('q', ''));
+        $questions = $exam->questions()
+            ->when($questionSearch !== '', function ($query) use ($questionSearch) {
+                $query->where(function ($q) use ($questionSearch) {
+                    $q->where('question', 'like', '%' . $questionSearch . '%')
+                        ->orWhere('option_1', 'like', '%' . $questionSearch . '%')
+                        ->orWhere('option_2', 'like', '%' . $questionSearch . '%')
+                        ->orWhere('option_3', 'like', '%' . $questionSearch . '%')
+                        ->orWhere('option_4', 'like', '%' . $questionSearch . '%')
+                        ->orWhere('option_5', 'like', '%' . $questionSearch . '%')
+                        ->orWhere('answer', 'like', '%' . $questionSearch . '%');
+                });
+            })
+            ->orderBy('id', 'ASC')
+            ->paginate($perPage);
+        $questions->through(function ($question) use ($exam) {
+            $question->original_number = $exam->questions()
+                ->where('id', '<=', $question->id)
+                ->count();
+
+            return $question;
+        });
+        $questions->appends(['per_page' => $perPage, 'q' => $questionSearch]);
         $exam->setRelation('questions', $questions);
         $exam->is_kecermatan = false;
 
@@ -309,6 +352,10 @@ class ExamController extends Controller
             'importErrors' => $importErrors,
             'importWarnings' => $importWarnings,
             'undetectedAnswers' => $undetectedAnswers,
+            'filters' => [
+                'q' => $questionSearch,
+                'per_page' => $perPage,
+            ],
         ]);
     }
 
@@ -339,12 +386,14 @@ class ExamController extends Controller
             'random_question' => 'required|in:Y,N',
             'random_answer' => 'required|in:Y,N',
             'show_answer' => 'required|in:Y,N',
+            'discussion_file' => 'nullable|file',
+            'remove_discussion_file' => 'nullable|boolean',
         ]);
 
         // Transaction: update exam + sinkronisasi kecermatan_exams atomik
         // (jika salah satu gagal, keduanya dibatalkan agar tidak tidak konsisten).
         \DB::transaction(function () use ($request, $exam) {
-            $exam->update([
+            $data = [
                 'title' => $request->title,
                 'lesson_id' => $request->lesson_id,
                 'duration' => $request->duration,
@@ -352,7 +401,23 @@ class ExamController extends Controller
                 'random_question' => $request->random_question,
                 'random_answer' => $request->random_answer,
                 'show_answer' => $request->show_answer,
-            ]);
+            ];
+
+            if ($exam->isKecermatan()) {
+                $data['discussion_file_path'] = null;
+                $data['discussion_file_name'] = null;
+            } elseif ($request->boolean('remove_discussion_file')) {
+                $this->deleteDiscussionFile($exam);
+                $data['discussion_file_path'] = null;
+                $data['discussion_file_name'] = null;
+            } elseif ($request->hasFile('discussion_file')) {
+                $this->deleteDiscussionFile($exam);
+                $discussionFile = $this->storeDiscussionFile($request);
+                $data['discussion_file_path'] = $discussionFile['path'];
+                $data['discussion_file_name'] = $discussionFile['name'];
+            }
+
+            $exam->update($data);
 
             // Sinkronkan perubahan ke kecermatan_exams agar judul/durasi konsisten
             // di dashboard siswa dan laporan (durasi kecermatan tersimpan dalam detik)
@@ -373,9 +438,38 @@ class ExamController extends Controller
     public function destroy($id)
     {
         $exam = Exam::findOrFail($id);
+        $this->deleteDiscussionFile($exam);
         $exam->delete();
 
         return redirect()->route('admin.exams.index');
+    }
+
+    private function storeDiscussionFile(Request $request): array
+    {
+        if (!$request->hasFile('discussion_file')) {
+            return ['path' => null, 'name' => null];
+        }
+
+        $file = $request->file('discussion_file');
+        $extension = strtolower($file->getClientOriginalExtension());
+
+        if (!in_array($extension, ['pdf', 'docx'])) {
+            throw ValidationException::withMessages([
+                'discussion_file' => 'File pembahasan harus berupa PDF atau Word (.docx).',
+            ]);
+        }
+
+        return [
+            'path' => $file->store('exam-discussions', 'local'),
+            'name' => $file->getClientOriginalName(),
+        ];
+    }
+
+    private function deleteDiscussionFile(Exam $exam): void
+    {
+        if ($exam->discussion_file_path) {
+            Storage::disk('local')->delete($exam->discussion_file_path);
+        }
     }
 
     /**

@@ -150,6 +150,39 @@
                                 </div>
                             </div>
 
+                            <div v-if="!selectedLessonIsKecermatan" class="mb-4">
+                                <label>File Pembahasan</label>
+                                <input
+                                    type="file"
+                                    ref="discussionFileInput"
+                                    accept=".pdf,.docx"
+                                    @change="handleDiscussionFileChange"
+                                    class="form-control"
+                                />
+                                <small class="text-muted d-block mt-1">PDF atau Word (.docx). Upload baru akan mengganti file lama.</small>
+                                <div
+                                    v-if="errors.discussion_file"
+                                    class="alert alert-danger mt-2"
+                                >
+                                    {{ errors.discussion_file }}
+                                </div>
+                                <div v-if="form.discussion_file" class="mt-2 d-flex align-items-center gap-2">
+                                    <span class="badge bg-success"><i class="fa fa-file me-1"></i>{{ form.discussion_file.name }}</span>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" @click="clearDiscussionFile">
+                                        <i class="fa fa-times me-1"></i> Hapus
+                                    </button>
+                                </div>
+                                <div v-else-if="exam.discussion_file_name && !form.remove_discussion_file" class="mt-2 d-flex align-items-center gap-2">
+                                    <span class="badge bg-secondary"><i class="fa fa-file me-1"></i>{{ exam.discussion_file_name }}</span>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" @click="markDiscussionFileRemoved">
+                                        <i class="fa fa-trash me-1"></i> Hapus File
+                                    </button>
+                                </div>
+                                <div v-else-if="form.remove_discussion_file" class="alert alert-warning py-2 mt-2 mb-0">
+                                    File pembahasan akan dihapus saat update.
+                                </div>
+                            </div>
+
                             <div class="row">
                                 <div class="col-md-4">
                                     <div class="mb-4">
@@ -230,7 +263,7 @@
 <script>
 import LayoutAdmin from '../../../Layouts/Admin.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
-import { reactive, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import Swal from 'sweetalert2';
 import Editor from '@tinymce/tinymce-vue';
 
@@ -253,6 +286,22 @@ export default {
             random_question: props.exam.random_question,
             random_answer: props.exam.random_answer,
             show_answer: props.exam.show_answer,
+            discussion_file: null,
+            remove_discussion_file: false,
+        });
+
+        const discussionFileInput = ref(null);
+        const allLessons = computed(() => [
+            ...(props.lessons?.psikologi || []),
+            ...(props.lessons?.akademik || []),
+        ]);
+
+        const selectedLessonIsKecermatan = computed(() => {
+            const lesson = allLessons.value.find((item) => item.id == form.lesson_id);
+            const name = lesson?.name;
+            if (!name || typeof name !== 'string') return false;
+            const normalized = name.toLowerCase().trim();
+            return normalized === 'kecermatan' || normalized.startsWith('kecermatan ');
         });
 
         // Reset lesson_id jika category berubah
@@ -263,8 +312,36 @@ export default {
             },
         );
 
+        watch(() => selectedLessonIsKecermatan.value, (isKecermatan) => {
+            if (isKecermatan) {
+                clearDiscussionFile();
+                form.remove_discussion_file = true;
+            }
+        });
+
+        const handleDiscussionFileChange = (event) => {
+            form.discussion_file = event.target.files[0] || null;
+            if (form.discussion_file) {
+                form.remove_discussion_file = false;
+            }
+        };
+
+        const clearDiscussionFile = () => {
+            form.discussion_file = null;
+            if (discussionFileInput.value) discussionFileInput.value.value = '';
+        };
+
+        const markDiscussionFileRemoved = () => {
+            clearDiscussionFile();
+            form.remove_discussion_file = true;
+        };
+
         const submit = () => {
-            router.put(`/admin/exams/${props.exam.id}`, form, {
+            router.post(`/admin/exams/${props.exam.id}`, {
+                ...form,
+                _method: 'put',
+            }, {
+                forceFormData: true,
                 onSuccess: () => {
                     Swal.fire({
                         title: 'Success!',
@@ -277,8 +354,15 @@ export default {
             });
         };
 
-        return { form, submit };
+        return {
+            form,
+            submit,
+            discussionFileInput,
+            selectedLessonIsKecermatan,
+            handleDiscussionFileChange,
+            clearDiscussionFile,
+            markDiscussionFileRemoved,
+        };
     },
 };
 </script>
-
