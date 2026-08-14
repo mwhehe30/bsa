@@ -46,6 +46,14 @@ class HandleInertiaRequests extends Middleware
                 'error'     => fn () => $request->session()->get('error'),
                 'info'      => fn () => $request->session()->get('info'),
             ],
+
+            // flash message yang dipakai halaman-halaman Vue via $page.props.flash.*
+            'flash' => fn () => [
+                'success' => $request->session()->get('success'),
+                'error'   => $request->session()->get('error'),
+                'info'    => $request->session()->get('info'),
+                'warning' => $request->session()->get('warning'),
+            ],
             //user authenticated
             'auth'  =>[
                 'user'          => auth()->user() ?   auth()->user() : null,

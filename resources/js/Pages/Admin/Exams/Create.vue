@@ -214,44 +214,56 @@
                                 </button>
                             </div>
                             <div class="card-body">
-                                <div class="mb-3">
-                                    <label class="fw-bold">Pertanyaan <span class="text-danger">*</span></label>
-                                    <textarea class="form-control" rows="3" v-model="q.question" placeholder="Masukkan teks pertanyaan..."></textarea>
-                                </div>
-                                <div class="row">
-                                    <div v-for="n in 5" :key="n" class="col-md-6 mb-2">
-                                        <label>Pilihan {{ ['A','B','C','D','E'][n-1] }}</label>
-                                        <input type="text" class="form-control" v-model="q['option_' + n]" :placeholder="`Pilihan ${['A','B','C','D','E'][n-1]}`" />
-                                    </div>
-                                </div>
+                                <div class="table-responsive">
+                                    <table class="admin-form-table table-bordered table-centered mb-0 table rounded">
+                                        <tbody>
+                                            <tr>
+                                                <td style="width: 20%" class="fw-bold">Soal</td>
+                                                <td>
+                                                    <Editor :api-key="TinyMCEApiKey" v-model="q.question" :init="editorConfig(300)" />
+                                                </td>
+                                            </tr>
+                                            <tr v-for="n in 5" :key="n">
+                                                <td style="width: 20%" class="fw-bold">Pilihan {{ ['A','B','C','D','E'][n-1] }}</td>
+                                                <td>
+                                                    <Editor :api-key="TinyMCEApiKey" v-model="q['option_' + n]" :init="editorConfig(130)" />
+                                                </td>
+                                            </tr>
 
-                                <!-- Jawaban (Pilihan Ganda) -->
-                                <div v-if="!selectedLessonIsPersonality" class="mt-2">
-                                    <label class="fw-bold">Jawaban Benar <span class="text-danger">*</span></label>
-                                    <select class="form-select" v-model="q.answer">
-                                        <option value="1">A</option>
-                                        <option value="2">B</option>
-                                        <option value="3">C</option>
-                                        <option value="4">D</option>
-                                        <option value="5">E</option>
-                                    </select>
-                                </div>
+                                            <!-- Jawaban (Pilihan Ganda) -->
+                                            <tr v-if="!selectedLessonIsPersonality">
+                                                <td style="width: 20%" class="fw-bold">Jawaban Benar</td>
+                                                <td>
+                                                    <select class="form-control" v-model="q.answer">
+                                                        <option value="1">A</option>
+                                                        <option value="2">B</option>
+                                                        <option value="3">C</option>
+                                                        <option value="4">D</option>
+                                                        <option value="5">E</option>
+                                                    </select>
+                                                </td>
+                                            </tr>
 
-                                <!-- Point (Kepribadian) -->
-                                <div v-else class="mt-2">
-                                    <label class="fw-bold">Point per Pilihan</label>
-                                    <div class="row">
-                                        <div v-for="n in 5" :key="n" class="col-md-2">
-                                            <label>{{ ['A','B','C','D','E'][n-1] }}</label>
-                                            <input type="number" class="form-control" v-model="q['point_' + n]" min="1" max="5" />
-                                        </div>
-                                    </div>
-                                    <small class="text-muted">Default: A=5, B=4, C=3, D=2, E=1</small>
+                                            <!-- Point (Kepribadian) -->
+                                            <tr v-else>
+                                                <td style="width: 20%" class="fw-bold">Point Pilihan</td>
+                                                <td>
+                                                    <div class="row">
+                                                        <div v-for="n in 5" :key="n" class="col-md-2">
+                                                            <label>{{ ['A','B','C','D','E'][n-1] }}</label>
+                                                            <input type="number" class="form-control" v-model="q['point_' + n]" min="1" max="5" />
+                                                        </div>
+                                                    </div>
+                                                    <small class="text-muted">Default: A=5, B=4, C=3, D=2, E=1</small>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
                         </div>
 
-                        <button type="button" class="btn btn-outline-primary border-0 shadow-sm" @click="addQuestion">
+                        <button type="button" class="btn btn-primary border-0 shadow" @click="addQuestion">
                             <i class="fa fa-plus me-1"></i> Tambah Soal
                         </button>
                     </div>
@@ -286,6 +298,7 @@ import LayoutAdmin from '../../../Layouts/Admin.vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import { reactive, ref, computed, watch } from 'vue';
 import Editor from '@tinymce/tinymce-vue';
+import { getXsrfToken, refreshCsrfToken } from '../../../utils/csrf';
 
 export default {
     layout: LayoutAdmin,
@@ -337,6 +350,80 @@ export default {
             const all = [...psikologiLessons.value, ...akademikLessons.value];
             const sel = all.find((l) => l.id == form.lesson_id);
             return sel ? isPersonalityLesson(sel.name) : false;
+        });
+
+        /**
+         * Konfigurasi TinyMCE dengan dukungan upload gambar dari laptop
+         * (sama seperti halaman Tambah Soal) supaya form konsisten.
+         */
+        const editorConfig = (height = 250) => ({
+            height,
+            menubar: false,
+            plugins: 'lists link image emoticons table',
+            toolbar:
+                'styleselect | bold italic | ' +
+                'alignleft aligncenter alignright alignjustify | ' +
+                'bullist numlist | table | link image emoticons',
+            automatic_uploads: true,
+            images_reuse_filename: false,
+            file_picker_types: 'image',
+            images_upload_handler: (blobInfo, progress) =>
+                new Promise((resolve, reject) => {
+                    let retried = false;
+
+                    const attemptUpload = () => {
+                        const formData = new FormData();
+                        formData.append('file', blobInfo.blob(), blobInfo.filename());
+
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', '/admin/upload-image');
+                        xhr.setRequestHeader('X-XSRF-TOKEN', getXsrfToken());
+                        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+                        xhr.upload.onprogress = (e) => {
+                            if (e.lengthComputable) {
+                                progress(Math.round((e.loaded / e.total) * 100));
+                            }
+                        };
+
+                        xhr.onload = () => {
+                            if (xhr.status === 419 && !retried) {
+                                retried = true;
+                                refreshCsrfToken('/admin/csrf-token', true).then((fresh) => {
+                                    if (fresh) {
+                                        attemptUpload();
+                                        return;
+                                    }
+                                    reject({ message: 'Upload gagal: HTTP ' + xhr.status, remove: true });
+                                });
+                                return;
+                            }
+                            if (xhr.status < 200 || xhr.status >= 300) {
+                                reject({ message: 'Upload gagal: HTTP ' + xhr.status, remove: true });
+                                return;
+                            }
+                            try {
+                                const json = JSON.parse(xhr.responseText);
+                                if (!json.location) {
+                                    reject({ message: 'Respon tidak valid dari server', remove: true });
+                                    return;
+                                }
+                                resolve(json.location);
+                            } catch {
+                                reject({ message: 'Gagal parsing respon server', remove: true });
+                            }
+                        };
+
+                        xhr.onerror = () =>
+                            reject({ message: 'Upload gagal (koneksi error)', remove: true });
+
+                        xhr.send(formData);
+                    };
+
+                    attemptUpload();
+                }),
+            valid_elements: '*[*]',
+            extended_valid_elements: 'img[*]',
         });
 
         const selectedLessonIsKecermatan = computed(() => {
@@ -398,7 +485,14 @@ export default {
                 random_question: form.random_question,
                 random_answer: form.random_answer,
                 show_answer: form.show_answer,
-                questions: questions.value.filter((q) => q.question.trim()),
+                // TinyMCE bisa mengisi konten kosong dengan HTML kosong
+                // (mis. "<p></p>") — buang soal yang tidak punya teks.
+                questions: questions.value.filter((q) => {
+                    const text = String(q.question || '')
+                        .replace(/<[^>]*>/g, '')
+                        .trim();
+                    return text !== '';
+                }),
             };
 
             if (importFile.value) {
@@ -435,6 +529,7 @@ export default {
             questions, addQuestion, removeQuestion,
             importFile, importFileInput, handleFileChange, clearImport,
             discussionFile, discussionFileInput, handleDiscussionFileChange, clearDiscussionFile,
+            editorConfig,
             isSubmitting, submit, resetAll,
         };
     },

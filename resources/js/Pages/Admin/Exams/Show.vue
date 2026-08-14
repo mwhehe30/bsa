@@ -128,6 +128,20 @@
 
                         <!-- Flash Messages -->
                         <div
+                            v-if="$page.props.flash?.error"
+                            class="alert alert-danger alert-dismissible fade show"
+                            role="alert"
+                        >
+                            <i class="fa fa-times-circle me-2"></i>
+                            {{ $page.props.flash.error }}
+                            <button
+                                type="button"
+                                class="btn-close"
+                                data-bs-dismiss="alert"
+                            ></button>
+                        </div>
+
+                        <div
                             v-if="$page.props.flash?.success"
                             class="alert alert-success alert-dismissible fade show"
                             role="alert"
@@ -485,8 +499,8 @@
 <script>
 import LayoutAdmin from '../../../Layouts/Admin.vue';
 import Pagination from '../../../Components/Pagination.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
-import { computed, ref } from 'vue';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { computed, ref, onMounted } from 'vue';
 import Swal from 'sweetalert2';
 import { sanitizeHtml } from '../../../utils/sanitize';
 
@@ -509,6 +523,21 @@ export default {
         const importWarnings = ref(props.importWarnings || []);
         const undetectedAnswers = ref(props.undetectedAnswers || []);
         const search = ref(props.filters?.q || '');
+
+        // Popup error (mis. import Word saat pembuatan ujian tidak menghasilkan
+        // soal) agar pengguna langsung melihat kegagalannya.
+        const page = usePage();
+        onMounted(() => {
+            const flashError = page.props.flash?.error;
+            if (flashError) {
+                Swal.fire({
+                    title: 'Gagal!',
+                    text: flashError,
+                    icon: 'error',
+                    confirmButtonText: 'OK',
+                });
+            }
+        });
 
         const isPersonality = computed(() => {
             const name = props.exam?.lesson?.name;

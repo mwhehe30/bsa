@@ -207,6 +207,14 @@ class ExamController extends Controller
                         if (isset($result['has_errors']) && $result['has_errors']) {
                             session()->flash('import_errors', $result['errors']);
                         }
+
+                        // Penting: beri tahu hasil import dengan jelas, termasuk
+                        // kalau tidak ada soal yang berhasil masuk sama sekali.
+                        if (!empty($result['success'])) {
+                            session()->flash('success', $result['message'] ?? 'Soal berhasil diimport.');
+                        } else {
+                            session()->flash('error', $result['message'] ?? 'Import Word gagal: tidak ada soal yang berhasil diimport.');
+                        }
                     } elseif (in_array($ext, ['csv', 'xls', 'xlsx'])) {
                         $import = new QuestionsImport($exam->id, $exam->isPersonality());
                         Excel::import($import, $file);
@@ -726,8 +734,9 @@ class ExamController extends Controller
                 ->with('success', $result['message']);
         }
 
-        return redirect()->route('admin.exams.show', $exam->id)
-            ->with('error', $result['message']);
+        // Gagal: kembali ke halaman import agar pesan error langsung terlihat
+        // dan pengguna bisa memperbaiki file lalu mencoba lagi.
+        return redirect()->back()->with('error', $result['message']);
     }
 
     public function monitor(Request $request)

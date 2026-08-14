@@ -127,7 +127,9 @@ class QuestionsWordImport
 
                             // List item kosong di tengah dokumen = pemisah, bukan
                             // pertanyaan baru. Lewati agar tidak mengganggu status.
-                            if ($trimmedQuestion === '') {
+                            // Kecuali item berisi GAMBAR (soal bergambar tanpa teks)
+                            // — itu adalah soal baru yang valid.
+                            if ($trimmedQuestion === '' && empty($images)) {
                                 continue;
                             }
 
@@ -183,7 +185,11 @@ class QuestionsWordImport
                                 foreach ($images as $img) {
                                     $url = $this->saveImage($img);
                                     if ($url) {
-                                        $current['question'] .= '<br/><img src="' . $url . '" style="max-width:100%;height:auto">';
+                                        $imgTag = '<img src="' . $url . '" style="max-width:100%;height:auto">';
+                                        if ($current['question'] !== '') {
+                                            $imgTag = '<br/>' . $imgTag;
+                                        }
+                                        $current['question'] .= $imgTag;
                                     }
                                 }
                             }
@@ -339,9 +345,12 @@ class QuestionsWordImport
                 $this->finalizeQuestion($current, $questions, $explanationText, $pendingImages, $hasOptions, $seqOptIdx, $optMap);
             }
 
-            // Filter pertanyaan kosong
+            // Filter pertanyaan kosong (soal yang hanya berisi gambar tetap dipertahankan)
             $questions = array_values(
-                array_filter($questions, fn($q) => trim(strip_tags($q['question'])) !== '')
+                array_filter(
+                    $questions,
+                    fn($q) => trim(strip_tags($q['question'])) !== '' || stripos($q['question'], '<img') !== false
+                )
             );
 
             // Post-processing
@@ -634,6 +643,25 @@ class QuestionsWordImport
 
         $newXml = $this->unwrapAlternateContent($xml);
 
+        // Normalisasi tambahan:
+        //  1. Rumus (<m:oMath>) diubah jadi teks biasa — tanpa ini PHPWord
+        //     menyerahkan fragmen oMath ke PhpOffice\Math yang gagal loadXML
+        //     (namespace m/w hanya dideklarasikan di root, tidak ikut tersalin)
+        //     sehingga import fatal: "Namespace prefix m on oMath is not defined".
+        //  2. Opsi berhuruf (A., B., ...) yang ditulis sebagai list level-0
+        //     dinaikkan jadi level-1 agar tidak salah dibaca sebagai soal.
+        $numberingXml = $zip->getFromName('word/numbering.xml');
+        $newXml = $this->normalizeDocumentXml($newXml, $numberingXml === false ? '' : $numberingXml);
+
+        // Terapkan crop Word (a:srcRect) ke file media. Word sering menampilkan
+        // gambar terpotong (mis. screenshot 1920x1080 yang ditampilkan hanya
+        // bagian persegi). Tanpa ini PHPWord mengambil gambar utuh sehingga
+        // tampilan di sistem berbeda dari Word.
+        $mediaCrops = $this->mapCropsToMedia(
+            $this->extractSrcRectCrops($newXml),
+            $zip->getFromName('word/_rels/document.xml.rels')
+        );
+
         $tmp = tempnam(sys_get_temp_dir(), 'docx_');
         if ($tmp === false) {
             $zip->close();
@@ -657,6 +685,12 @@ class QuestionsWordImport
             } else {
                 $content = $zip->getFromName($name);
                 if ($content !== false) {
+                    if (isset($mediaCrops[$name])) {
+                        $cropped = $this->cropImageBinary($content, $mediaCrops[$name]);
+                        if ($cropped !== null) {
+                            $content = $cropped;
+                        }
+                    }
                     $outZip->addFromString($name, $content);
                 }
             }
@@ -666,6 +700,126 @@ class QuestionsWordImport
         $outZip->close();
 
         return $tmp;
+    }
+
+    /**
+     * Baca atribut crop gambar (a:srcRect) dari document.xml. Nilai l/t/r/b
+     * adalah perseribu persen (100000 = 100%), dikonversi ke pecahan 0..1.
+     *
+     * @return array<string, array{l: float, t: float, r: float, b: float}> map rId => crop
+     */
+    protected function extractSrcRectCrops(string $xml): array
+    {
+        if (strpos($xml, 'srcRect') === false) return [];
+
+        $dom = new \DOMDocument();
+        $prev = libxml_use_internal_errors(true);
+        $ok = $dom->loadXML($xml);
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+        if (!$ok) return [];
+
+        $xpath = new \DOMXPath($dom);
+        $xpath->registerNamespace('a', 'http://schemas.openxmlformats.org/drawingml/2006/main');
+        $xpath->registerNamespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+
+        $crops = [];
+        foreach ($xpath->query('//a:blip') as $blip) {
+            $embed = $blip->getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed');
+            if ($embed === '') continue;
+
+            // a:srcRect adalah saudara a:blip di dalam pic:blipFill
+            $srcRect = null;
+            $parent = $blip->parentNode;
+            if ($parent) {
+                foreach ($parent->childNodes as $c) {
+                    if ($c->nodeType === XML_ELEMENT_NODE
+                        && $c->localName === 'srcRect'
+                        && $c->namespaceURI === 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                    ) {
+                        $srcRect = $c;
+                        break;
+                    }
+                }
+            }
+            if (!$srcRect) continue;
+
+            $frac = function (string $attr) use ($srcRect): float {
+                $v = $srcRect->getAttribute($attr);
+                return $v === '' ? 0.0 : ((float) $v) / 100000.0;
+            };
+            $l = $frac('l');
+            $t = $frac('t');
+            $r = $frac('r');
+            $b = $frac('b');
+            if ($l == 0 && $t == 0 && $r == 0 && $b == 0) continue;
+
+            $crops[$embed] = ['l' => $l, 't' => $t, 'r' => $r, 'b' => $b];
+        }
+        return $crops;
+    }
+
+    /**
+     * Petakan rId -> path media di dalam zip (via word/_rels/document.xml.rels),
+     * lalu kembalikan map path => crop.
+     *
+     * @param array<string, array{l: float, t: float, r: float, b: float}> $crops
+     * @return array<string, array{l: float, t: float, r: float, b: float}>
+     */
+    protected function mapCropsToMedia(array $crops, $relsXml): array
+    {
+        if (empty($crops) || !is_string($relsXml) || $relsXml === '') return [];
+
+        $dom = new \DOMDocument();
+        $prev = libxml_use_internal_errors(true);
+        $ok = $dom->loadXML($relsXml);
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+        if (!$ok) return [];
+
+        $xpath = new \DOMXPath($dom);
+        $xpath->registerNamespace('r', 'http://schemas.openxmlformats.org/package/2006/relationships');
+
+        $map = [];
+        foreach ($xpath->query('//r:Relationship') as $rel) {
+            $id = $rel->getAttribute('Id');
+            $target = $rel->getAttribute('Target');
+            if ($id !== '' && isset($crops[$id]) && $target !== '') {
+                // Target relatif terhadap folder word/
+                $map['word/' . ltrim($target, '/')] = $crops[$id];
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * Potong binary gambar sesuai crop Word (a:srcRect). Kembalikan binary PNG
+     * hasil crop, atau null jika gagal / GD tidak tersedia.
+     *
+     * @param array{l: float, t: float, r: float, b: float} $crop
+     */
+    protected function cropImageBinary(string $binary, array $crop): ?string
+    {
+        if (!extension_loaded('gd') || !function_exists('imagecrop')) return null;
+        $src = @imagecreatefromstring($binary);
+        if (!$src) return null;
+
+        $w = imagesx($src);
+        $h = imagesy($src);
+        $x = (int) round($crop['l'] * $w);
+        $y = (int) round($crop['t'] * $h);
+        $cw = max(1, min((int) round($w * (1 - $crop['l'] - $crop['r'])), $w - $x));
+        $ch = max(1, min((int) round($h * (1 - $crop['t'] - $crop['b'])), $h - $y));
+
+        $dst = imagecrop($src, ['x' => $x, 'y' => $y, 'width' => $cw, 'height' => $ch]);
+        imagedestroy($src);
+        if ($dst === false) return null;
+
+        ob_start();
+        imagepng($dst);
+        $png = ob_get_clean();
+        imagedestroy($dst);
+        return ($png === false || $png === '') ? null : $png;
     }
 
     /**
@@ -764,6 +918,194 @@ class QuestionsWordImport
         $t->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
         $t->textContent = $text;
         return $t;
+    }
+
+    /**
+     * Normalisasi document.xml sebelum dibaca PHPWord:
+     *  1. <m:oMath> (rumus) -> <w:r><w:t>teks</w:t></w:r> agar PHPWord tidak
+     *     memanggil PhpOffice\Math (sering gagal parse namespace / konstruk
+     *     rumus yang belum didukung).
+     *  2. List item level-0 dengan penomoran huruf (upperLetter/lowerLetter,
+     *     mis. opsi "A." "B." yang ditulis setara dengan soal) dinaikkan ke
+     *     level-1 agar dibaca sebagai opsi, bukan soal baru.
+     *
+     * @return string XML hasil normalisasi (atau XML asli jika tidak berubah)
+     */
+    protected function normalizeDocumentXml(string $xml, string $numberingXml): string
+    {
+        $hasMath = strpos($xml, 'oMath') !== false;
+        $hasNumPr = strpos($xml, 'numPr') !== false;
+        if (!$hasMath && (!$hasNumPr || $numberingXml === '')) {
+            return $xml;
+        }
+
+        $dom = new \DOMDocument();
+        $prev = libxml_use_internal_errors(true);
+        $ok = $dom->loadXML($xml);
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+        if (!$ok) return $xml;
+
+        $xpath = new \DOMXPath($dom);
+        $xpath->registerNamespace('w', self::NS_W);
+
+        $changed = false;
+        if ($hasMath) {
+            $changed = $this->convertOMathToText($dom, $xpath) || $changed;
+        }
+        if ($hasNumPr && $numberingXml !== '') {
+            $changed = $this->bumpLetterOptionsToLevel1($dom, $xpath, $numberingXml) || $changed;
+        }
+
+        if (!$changed) return $xml;
+        return $dom->saveXML();
+    }
+
+    /**
+     * Ganti semua <m:oMath> dengan run teks biasa (pecahan -> "a/b",
+     * superskrip -> "a^b", subskrip -> "a_b", delimiter -> "(...)").
+     */
+    protected function convertOMathToText(\DOMDocument $dom, \DOMXPath $xpath): bool
+    {
+        $xpath->registerNamespace('m', 'http://schemas.openxmlformats.org/officeDocument/2006/math');
+        $maths = $xpath->query('//m:oMath');
+        if ($maths === false || $maths->length === 0) return false;
+
+        $changed = false;
+        foreach ($maths as $m) {
+            $text = $this->oMathToText($m);
+            $run = $dom->createElementNS(self::NS_W, 'w:r');
+            $run->appendChild($this->createTextNode($dom, $text));
+            $parent = $m->parentNode;
+            if ($parent) {
+                $parent->replaceChild($run, $m);
+                $changed = true;
+            }
+        }
+        return $changed;
+    }
+
+    /**
+     * Ekstrak teks terbaca dari node OMML secara rekursif.
+     */
+    protected function oMathToText(\DOMNode $node): string
+    {
+        $out = '';
+        foreach ($node->childNodes as $c) {
+            if ($c->nodeType !== XML_ELEMENT_NODE) continue;
+            switch ($c->localName) {
+                case 't':
+                    $out .= $c->textContent;
+                    break;
+                case 'f': // pecahan: pembilang/penyebut
+                    $out .= $this->oMathChildText($c, 'num')
+                        . '/'
+                        . $this->oMathChildText($c, 'den');
+                    break;
+                case 'sSup': // pangkat: a^b
+                    $out .= $this->oMathChildText($c, 'e')
+                        . '^'
+                        . $this->oMathChildText($c, 'sup');
+                    break;
+                case 'sSub': // indeks: a_b
+                    $out .= $this->oMathChildText($c, 'e')
+                        . '_'
+                        . $this->oMathChildText($c, 'sub');
+                    break;
+                case 'd': // delimiter/kurung
+                    $out .= '(' . $this->oMathToText($c) . ')';
+                    break;
+                default:
+                    $out .= $this->oMathToText($c);
+            }
+        }
+        return $out;
+    }
+
+    protected function oMathChildText(\DOMNode $node, string $tag): string
+    {
+        foreach ($node->childNodes as $c) {
+            if ($c->nodeType === XML_ELEMENT_NODE && $c->localName === $tag) {
+                return $this->oMathToText($c);
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Naikkan list item level-0 yang memakai penomoran huruf (upperLetter /
+     * lowerLetter) menjadi level-1, agar opsi "A. xxx" yang ditulis setara
+     * dengan soal tidak dibaca sebagai soal baru. Hanya dilakukan jika dokumen
+     * juga memuat list bernomor desimal (soal) — dokumen yang seluruhnya list
+     * berhuruf dibiarkan apa adanya.
+     */
+    protected function bumpLetterOptionsToLevel1(\DOMDocument $dom, \DOMXPath $xpath, string $numberingXml): bool
+    {
+        $fmt = $this->resolveNumberingFormats($numberingXml);
+        if (empty($fmt)) return false;
+
+        // Pastikan ada list desimal ("soal") sebelum mengubah struktur.
+        $hasDecimal = false;
+        foreach ($xpath->query('//w:p') as $p) {
+            $numId = $xpath->query('./w:pPr/w:numPr/w:numId/@w:val', $p)->item(0);
+            if (!$numId) continue;
+            if (($fmt[$numId->nodeValue] ?? '') === 'decimal') {
+                $hasDecimal = true;
+                break;
+            }
+        }
+        if (!$hasDecimal) return false;
+
+        $changed = false;
+        foreach ($xpath->query('//w:p') as $p) {
+            $ilvl = $xpath->query('./w:pPr/w:numPr/w:ilvl/@w:val', $p)->item(0);
+            $numId = $xpath->query('./w:pPr/w:numPr/w:numId/@w:val', $p)->item(0);
+            if (!$ilvl || !$numId) continue;
+            if ((int) $ilvl->nodeValue !== 0) continue;
+            $f = $fmt[$numId->nodeValue] ?? '';
+            if ($f === 'upperLetter' || $f === 'lowerLetter') {
+                $ilvl->nodeValue = '1';
+                $changed = true;
+            }
+        }
+        return $changed;
+    }
+
+    /**
+     * Petakan numId -> numFmt level 0 dari word/numbering.xml.
+     *
+     * @return array<string, string>
+     */
+    protected function resolveNumberingFormats(string $numberingXml): array
+    {
+        $ndom = new \DOMDocument();
+        $prev = libxml_use_internal_errors(true);
+        $ok = $ndom->loadXML($numberingXml);
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+        if (!$ok) return [];
+
+        $nx = new \DOMXPath($ndom);
+        $nx->registerNamespace('w', self::NS_W);
+
+        $abstractFmt = [];
+        foreach ($nx->query('//w:abstractNum') as $an) {
+            $id = $an->getAttributeNS(self::NS_W, 'abstractNumId');
+            $lvl0 = $nx->query('./w:lvl[@w:ilvl="0"]/w:numFmt/@w:val', $an)->item(0);
+            if ($id !== '' && $lvl0 !== null) {
+                $abstractFmt[$id] = $lvl0->nodeValue;
+            }
+        }
+
+        $fmt = [];
+        foreach ($nx->query('//w:num') as $n) {
+            $id = $n->getAttributeNS(self::NS_W, 'numId');
+            $abs = $nx->query('./w:abstractNumId/@w:val', $n)->item(0);
+            if ($id !== '' && $abs !== null && isset($abstractFmt[$abs->nodeValue])) {
+                $fmt[$id] = $abstractFmt[$abs->nodeValue];
+            }
+        }
+        return $fmt;
     }
 
     // -------------------------------------------------------------------------
@@ -1102,7 +1444,7 @@ class QuestionsWordImport
             $validationErrors = [];
             $validationWarnings = [];
 
-            if (empty(trim(strip_tags($q['question'])))) {
+            if (empty(trim(strip_tags($q['question']))) && stripos($q['question'], '<img') === false) {
                 $validationErrors[] = 'Pertanyaan kosong';
             }
 
@@ -1192,7 +1534,14 @@ class QuestionsWordImport
         }
         if ($savedCount === 0) {
             $result['success'] = false;
-            $result['message'] = 'Tidak ada soal yang berhasil diimport.';
+            if (!empty($errors)) {
+                $result['message'] = 'Import gagal: tidak ada soal yang berhasil diimport ('
+                    . count($errors) . ' soal gagal validasi). Periksa kembali isi dan format soal di file.';
+            } else {
+                $result['message'] = 'Import gagal: tidak ada soal yang terdeteksi di dalam file. '
+                    . 'Pastikan format file sesuai template — soal pakai list bernomor (1. 2. 3.) '
+                    . 'dan opsi pakai sub-list berhuruf (a. b. c. d. e.).';
+            }
         }
 
         return $result;
