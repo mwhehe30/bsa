@@ -360,6 +360,106 @@ class ExamController extends Controller
     }
 
     /**
+     * Simpan beberapa jawaban sekaligus (batch).
+     *
+     * Frontend mengumpulkan jawaban secara lokal lalu mengirim 1 request per
+     * beberapa jawaban (bukan 1 request per jawaban). Ini mengurangi beban
+     * server dan membuat penyimpanan jauh lebih cepat saat siswa menjawab
+     * dengan cepat. Endpoint ini fire-and-forget dari sisi frontend; jawaban
+     * juga tetap ada di localStorage dan dikirim lengkap saat endExam.
+     */
+    public function answerQuestions(Request $request)
+    {
+        $validated = $request->validate([
+            'grade_id' => 'required|integer|exists:grades,id',
+            'answers' => 'required|array|max:50',
+            'answers.*.question_id' => 'required|integer|exists:questions,id',
+            'answers.*.answer' => 'required|integer|min:1|max:5',
+        ]);
+
+        $student = auth()->guard('student')->user();
+
+        $grade = Grade::where('id', $validated['grade_id'])
+                ->where('student_id', $student->id)
+                ->with('exam')
+                ->first();
+
+        if (!$grade) {
+            return response()->json(['error' => 'Grade not found'], 404);
+        }
+
+        if ($grade->status === 'completed') {
+            return response()->json(['error' => 'Exam already completed'], 422);
+        }
+
+        // SERVER-SIDE DURATION CHECK (no DB write)
+        if ($grade->start_time) {
+            $startTime = Carbon::parse($grade->start_time);
+            $totalDurationSeconds = $grade->exam->duration * 60;
+            $elapsedSeconds = Carbon::now()->diffInSeconds($startTime);
+            $remainingSeconds = $totalDurationSeconds - $elapsedSeconds;
+
+            if ($remainingSeconds <= 0) {
+                return response()->json([
+                    'error' => 'Waktu ujian telah habis',
+                    'time_up' => true,
+                ], 422);
+            }
+        }
+
+        $exam = $grade->exam;
+
+        $questionIds = collect($validated['answers'])->pluck('question_id')->all();
+
+        // Load semua pertanyaan & record jawaban sekaligus (hindari N+1)
+        $questions = Question::whereIn('id', $questionIds)->get()->keyBy('id');
+        $answerRecords = Answer::where('grade_id', $grade->id)
+                    ->where('student_id', $student->id)
+                    ->whereIn('question_id', $questionIds)
+                    ->get()
+                    ->keyBy('question_id');
+
+        $saved = 0;
+        foreach ($validated['answers'] as $item) {
+            $question = $questions->get($item['question_id']);
+            $answerRecord = $answerRecords->get($item['question_id']);
+
+            if (!$question || !$answerRecord) {
+                continue;
+            }
+
+            if ($exam->isPersonality()) {
+                // Personality: get point from selected option
+                $point = $question->getPoint($item['answer']);
+
+                $answerRecord->answer = $item['answer'];
+                $answerRecord->point = $point;
+                $answerRecord->is_correct = 'Y';
+            } else {
+                // Multiple choice: check correct
+                $result = ($question->answer == $item['answer']) ? 'Y' : 'N';
+
+                $answerRecord->answer = $item['answer'];
+                $answerRecord->is_correct = $result;
+                $answerRecord->point = 0;
+            }
+
+            $answerRecord->save();
+            $saved++;
+        }
+
+        return response()->json([
+            'success' => true,
+            'saved' => $saved,
+            'time_up' => false,
+            'question_answered' => Answer::where('grade_id', $grade->id)
+                ->where('student_id', $student->id)
+                ->where('answer', '!=', 0)
+                ->count(),
+        ]);
+    }
+
+    /**
      * End exam (submit)
      */
     public function endExam(Request $request)

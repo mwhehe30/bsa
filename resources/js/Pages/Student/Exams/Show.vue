@@ -56,7 +56,7 @@
                     <div class="flat-header d-flex justify-content-between align-items-center">
                         <h5 class="flat-title mb-0">
                             <i class="fa fa-question-circle me-2 text-indigo"></i>Soal No.
-                            <span class="text-indigo">{{ page }}</span>
+                            <span class="text-indigo">{{ currentPage }}</span>
                         </h5>
                         <span class="flat-badge badge-indigo">
                             {{ question_answered }}/{{ total_questions }} terjawab
@@ -64,27 +64,27 @@
                     </div>
 
                     <div class="card-body p-4 p-md-5">
-                        <div v-if="question_active !== null">
+                        <div v-if="activeQuestion !== null">
                             <div
                                 class="question-text"
-                                v-html="sanitize(question_active.question.question)"
+                                v-html="sanitize(activeQuestion.question.question)"
                             ></div>
 
                             <div class="options-list mt-4">
                                 <button
-                                    v-for="(answer, index) in answer_order"
+                                    v-for="(answer, index) in activeAnswerOrder"
                                     :key="index"
                                     type="button"
                                     class="option-btn"
                                     :class="{
                                         'option-btn-selected':
-                                            answer == question_active.answer,
+                                            answer == activeQuestion.answer,
                                     }"
                                     @click="
-                                        answer != question_active.answer &&
+                                        answer != activeQuestion.answer &&
                                             submitAnswer(
                                                 exam?.id,
-                                                question_active.question.id,
+                                                activeQuestion.question.id,
                                                 answer,
                                             )
                                     "
@@ -94,7 +94,7 @@
                                         class="option-text"
                                         v-html="
                                             sanitize(
-                                                question_active.question[
+                                                activeQuestion.question[
                                                     'option_' + answer
                                                 ],
                                             )
@@ -106,26 +106,28 @@
                     </div>
 
                     <div class="flat-footer">
-                        <Link
-                            v-if="page > 1"
-                            :href="`/student/exam/${exam?.id}/${id}/${page - 1}`"
+                        <button
+                            v-if="currentPage > 1"
+                            type="button"
                             class="btn-flat btn-flat-secondary"
+                            @click="goToPage(currentPage - 1)"
                         >
                             <i class="fa fa-chevron-left me-1"></i> Prev
-                        </Link>
+                        </button>
                         <div v-else></div>
 
                         <span class="small text-muted d-none d-md-inline">
                             <i class="fa fa-keyboard me-1"></i>Gunakan angka 1-5 untuk jawab cepat
                         </span>
 
-                        <Link
-                            v-if="page < total_questions"
-                            :href="`/student/exam/${exam?.id}/${id}/${page + 1}`"
+                        <button
+                            v-if="currentPage < total_questions"
+                            type="button"
                             class="btn-flat btn-flat-primary"
+                            @click="goToPage(currentPage + 1)"
                         >
                             Next <i class="fa fa-chevron-right ms-1"></i>
-                        </Link>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -146,13 +148,14 @@
                                 :key="index"
                                 class="col-3"
                             >
-                                <Link
-                                    :href="`/student/exam/${exam?.id}/${id}/${question.question_order}`"
+                                <button
+                                    type="button"
                                     class="grid-btn w-100"
                                     :class="gridClass(question)"
+                                    @click="goToPage(question.question_order)"
                                 >
                                     {{ question.question_order }}
-                                </Link>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -185,7 +188,7 @@
                 @click="showNavigationModal = true"
             >
                 <i class="fa fa-th-large me-1"></i> Soal:
-                {{ page }}/{{ total_questions }}
+                {{ currentPage }}/{{ total_questions }}
             </button>
             <button
                 type="button"
@@ -361,14 +364,17 @@
                         v-for="(question, index) in filteredQuestions"
                         :key="index"
                     >
-                        <Link
-                            :href="`/student/exam/${exam?.id}/${id}/${question.question_order}`"
+                        <button
+                            type="button"
                             class="grid-btn w-100"
                             :class="gridClass(question)"
-                            @click="showNavigationModal = false"
+                            @click="
+                                showNavigationModal = false;
+                                goToPage(question.question_order);
+                            "
                         >
                             {{ question.question_order }}
-                        </Link>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -384,7 +390,7 @@
 
 <script>
 import LayoutStudent from "../../../Layouts/Student.vue";
-import { Head, Link, router } from "@inertiajs/vue3";
+import { Head, router } from "@inertiajs/vue3";
 import { ref, onMounted, onBeforeUnmount, computed, watch } from "vue";
 import VueCountdown from "@chenfengyuan/vue-countdown";
 import Swal from "sweetalert2";
@@ -397,7 +403,7 @@ import {
 
 export default {
     layout: LayoutStudent,
-    components: { Head, Link, VueCountdown },
+    components: { Head, VueCountdown },
     props: {
         id: Number,
         page: Number,
@@ -440,6 +446,48 @@ export default {
                 return q;
             });
         });
+
+        // Pindah soal tanpa delay: halaman aktif disimpan lokal dan URL diperbarui
+        // via history.replaceState (tanpa request server). Semua soal sudah dimuat
+        // di all_questions, jadi navigasi Prev/Next/grid cukup mengubah index.
+        const currentPage = ref(props.page);
+
+        const activeQuestion = computed(() => {
+            const found = computedAllQuestions.value.find(
+                (q) => Number(q.question_order) === Number(currentPage.value),
+            );
+            return found || props.question_active;
+        });
+
+        const activeAnswerOrder = computed(() => {
+            const raw =
+                activeQuestion.value?.answer_order ?? props.answer_order;
+            if (Array.isArray(raw)) return raw;
+            if (typeof raw === "string" && raw.trim() !== "") {
+                return raw.split(",");
+            }
+            return props.answer_order || [];
+        });
+
+        const goToPage = (pageNum) => {
+            const target = Math.max(
+                1,
+                Math.min(Number(pageNum) || 1, props.total_questions),
+            );
+            if (target === currentPage.value) return;
+            currentPage.value = target;
+
+            // Perbarui URL agar refresh/F5 tetap berada di soal yang sama.
+            try {
+                window.history.replaceState(
+                    window.history.state,
+                    "",
+                    `/student/exam/${props.exam?.id}/${props.id}/${target}`,
+                );
+            } catch (e) {
+                console.warn("Gagal memperbarui URL soal:", e);
+            }
+        };
 
         const computedQuestionAnswered = computed(() => {
             return computedAllQuestions.value.filter((q) => q.answer != 0)
@@ -736,15 +784,15 @@ export default {
             if (e.target.matches("input, textarea, select")) return;
             if (e.key >= "1" && e.key <= "5") {
                 const idx = parseInt(e.key, 10) - 1;
-                const answer = props.answer_order?.[idx];
+                const answer = activeAnswerOrder.value?.[idx];
                 if (
                     answer &&
-                    props.question_active &&
-                    answer != props.question_active.answer
+                    activeQuestion.value &&
+                    answer != activeQuestion.value.answer
                 ) {
                     submitAnswer(
                         props.exam?.id,
-                        props.question_active.question.id,
+                        activeQuestion.value.question.id,
                         answer,
                     );
                 }
@@ -761,13 +809,8 @@ export default {
             if (saved) {
                 localAnswers.value = JSON.parse(saved);
             }
-            if (
-                props.question_active &&
-                localAnswers.value[props.question_active.question.id]
-            ) {
-                props.question_active.answer =
-                    localAnswers.value[props.question_active.question.id];
-            }
+            // Jawaban yang tersimpan di localStorage otomatis tampil melalui
+            // computedAllQuestions (activeQuestion membaca dari sana).
 
             // Safe listeners (non-violation) - add immediately
             document.addEventListener("contextmenu", handleContextMenu);
@@ -778,6 +821,12 @@ export default {
 
             // Fallback polling if Echo is not working
             checkStatusInterval = setInterval(checkStatus, 3000);
+
+            // Kirim jawaban antrean secara berkala (batch).
+            answerFlushInterval = setInterval(() => void flushAnswers(), 1500);
+
+            // Usaha terakhir: kirim sisa jawaban saat halaman ditutup.
+            window.addEventListener("pagehide", flushOnPageHide);
 
             // Listen for real-time block status changes via WebSocket
             if (window.Echo) {
@@ -828,6 +877,14 @@ export default {
             if (fullscreenCheckInterval) {
                 clearInterval(fullscreenCheckInterval);
             }
+            if (answerFlushInterval) {
+                clearInterval(answerFlushInterval);
+                answerFlushInterval = null;
+            }
+
+            // Kirim sisa jawaban yang masih di antrean saat keluar halaman.
+            window.removeEventListener("pagehide", flushOnPageHide);
+            void flushAnswers();
 
             // Bersihkan class overlay saat komponen unmount
             document.body.classList.remove("overlay-active");
@@ -854,47 +911,124 @@ export default {
             );
         });
 
-        // Simpan jawaban ke server secara inkremental (fire-and-forget).
-        // Jika gagal, tidak memblokir siswa — jawaban tetap ada di
-        // localStorage dan dikirim lengkap saat endExam/autoSubmitExam.
-        const saveAnswerToServer = async (questionId, answer) => {
-            try {
-                // fetchJsonWithCsrf otomatis refresh CSRF token saat 419
-                // lalu mengulang request sekali dengan token baru.
-                const data = await fetchJsonWithCsrf(
-                    "/student/exam-answer",
-                    {
-                        method: "POST",
-                        headers: csrfHeaders(),
-                        body: JSON.stringify({
-                            grade_id: props.grade?.id || props.exam_group?.id,
-                            question_id: questionId,
-                            answer: answer,
-                        }),
-                    },
-                    { csrfRefreshUrl: "/student/csrf-token" },
-                );
-                // Waktu habis saat menyimpan → langsung auto-submit
-                if (data && data.time_up) {
-                    autoSubmitExam();
+        // ── Penyimpanan batch (antrean lokal) ────────────────────────
+        // Jawaban tidak dikirim 1 request per soal, melainkan dikumpulkan
+        // dalam antrean lokal lalu dikirim batch (tiap 1,5 detik atau saat
+        // 25 jawaban terkumpul). Jauh lebih cepat & ringan untuk server.
+        // Jika request gagal, jawaban tetap aman di localStorage dan ikut
+        // terkirim lengkap saat endExam/autoSubmitExam.
+        const BATCH_SIZE = 25;
+        const answerQueue = new Map(); // question_id -> answer
+        let answerFlushInterval = null;
+        let flushing = false;
+        let flushPromise = null;
+
+        const enqueueAnswer = (questionId, answer) => {
+            answerQueue.set(questionId, answer);
+            if (answerQueue.size >= BATCH_SIZE) {
+                void flushAnswers();
+            }
+        };
+
+        // Kirim jawaban antrean sebagai satu request batch. Hanya satu flush
+        // yang boleh berjalan dalam satu waktu. Jawaban yang gagal tetap di
+        // antrean dan dicoba lagi pada flush berikutnya.
+        const flushAnswers = async () => {
+            if (flushing) return flushPromise;
+            if (answerQueue.size === 0) return Promise.resolve();
+
+            flushing = true;
+
+            const p = (async () => {
+                try {
+                    while (answerQueue.size > 0) {
+                        const batch = [...answerQueue.entries()].slice(
+                            0,
+                            BATCH_SIZE,
+                        );
+                        const body = batch.map(([question_id, answer]) => ({
+                            question_id,
+                            answer,
+                        }));
+
+                        try {
+                            const data = await fetchJsonWithCsrf(
+                                "/student/exam-answers",
+                                {
+                                    method: "POST",
+                                    headers: csrfHeaders(),
+                                    body: JSON.stringify({
+                                        grade_id:
+                                            props.grade?.id ||
+                                            props.exam_group?.id,
+                                        answers: body,
+                                    }),
+                                },
+                                { csrfRefreshUrl: "/student/csrf-token" },
+                            );
+
+                            // Waktu habis saat menyimpan → langsung auto-submit
+                            if (data && data.time_up) {
+                                autoSubmitExam();
+                            }
+
+                            // Sukses: buang jawaban yang sudah tersimpan.
+                            batch.forEach(([question_id]) =>
+                                answerQueue.delete(question_id),
+                            );
+                        } catch (error) {
+                            // Gagal: berhenti dulu, biarkan jawaban di antrean.
+                            // Flush berikutnya akan mencoba lagi.
+                            console.warn(
+                                `[flushAnswers] ${batch.length} jawaban gagal terkirim; akan dicoba lagi.`,
+                                error,
+                            );
+                            break;
+                        }
+                    }
+                } finally {
+                    flushing = false;
+                    flushPromise = null;
                 }
+            })();
+
+            flushPromise = p;
+            return p;
+        };
+
+        // Usaha terakhir saat halaman ditutup: kirim sisa jawaban tanpa
+        // menunggu respons (keepalive). Tidak bisa di-retry, tapi jauh lebih
+        // baik daripada hilang.
+        const flushOnPageHide = () => {
+            if (answerQueue.size === 0) return;
+
+            const body = [...answerQueue.entries()].map(
+                ([question_id, answer]) => ({ question_id, answer }),
+            );
+
+            try {
+                fetch("/student/exam-answers", {
+                    method: "POST",
+                    keepalive: true,
+                    headers: csrfHeaders(),
+                    body: JSON.stringify({
+                        grade_id: props.grade?.id || props.exam_group?.id,
+                        answers: body,
+                    }),
+                }).catch(() => {});
             } catch (e) {
-                console.error("Error saving answer to server:", e);
+                // abaikan
             }
         };
 
         const submitAnswer = (exam_id, question_id, answer) => {
-            if (props.question_active) {
-                props.question_active.answer = answer;
-            }
             localAnswers.value[question_id] = answer;
             localStorage.setItem(
                 storageKey.value,
                 JSON.stringify(localAnswers.value),
             );
-            // Simpan ke server (incremental) supaya tidak hilang walau
-            // browser ditutup / waktu habis sebelum submit akhir.
-            saveAnswerToServer(question_id, answer);
+            // Antrekan untuk dikirim batch di background.
+            enqueueAnswer(question_id, answer);
         };
 
         // FIX BUG #2: Client-side countdown only, no periodic API calls
@@ -1006,7 +1140,7 @@ export default {
 
         // ── Helpers UI (desain flat) ────────────────────────────
         const gridClass = (question) => {
-            if (question.question_order == props.page) {
+            if (Number(question.question_order) === Number(currentPage.value)) {
                 return "grid-btn grid-btn-active";
             }
             if (question.answer != 0) {
@@ -1030,6 +1164,10 @@ export default {
 
         return {
             options,
+            currentPage,
+            activeQuestion,
+            activeAnswerOrder,
+            goToPage,
             isBlocked,
             showFullscreenWarning,
             showNavigationModal,

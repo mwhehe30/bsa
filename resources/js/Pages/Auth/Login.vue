@@ -101,11 +101,37 @@
                                             </span>
                                             <input
                                                 id="admin-password"
-                                                type="password"
+                                                :type="
+                                                    showAdminPassword
+                                                        ? 'text'
+                                                        : 'password'
+                                                "
                                                 placeholder="Password"
                                                 class="form-control"
                                                 v-model="adminForm.password"
                                             />
+                                            <button
+                                                type="button"
+                                                class="btn btn-outline-secondary"
+                                                tabindex="-1"
+                                                @click="
+                                                    showAdminPassword =
+                                                        !showAdminPassword
+                                                "
+                                                :aria-label="
+                                                    showAdminPassword
+                                                        ? 'Sembunyikan password'
+                                                        : 'Tampilkan password'
+                                                "
+                                            >
+                                                <i
+                                                    :class="
+                                                        showAdminPassword
+                                                            ? 'fa fa-eye-slash'
+                                                            : 'fa fa-eye'
+                                                    "
+                                                ></i>
+                                            </button>
                                         </div>
                                         <div
                                             v-if="errors.password"
@@ -223,7 +249,11 @@
                                             </span>
                                             <input
                                                 id="student-password"
-                                                type="password"
+                                                :type="
+                                                    showStudentPassword
+                                                        ? 'text'
+                                                        : 'password'
+                                                "
                                                 placeholder="Password"
                                                 class="form-control"
                                                 :class="{
@@ -236,6 +266,28 @@
                                                 @blur="syncStudentCredentials"
                                                 ref="passwordInput"
                                             />
+                                            <button
+                                                type="button"
+                                                class="btn btn-outline-secondary"
+                                                tabindex="-1"
+                                                @click="
+                                                    showStudentPassword =
+                                                        !showStudentPassword
+                                                "
+                                                :aria-label="
+                                                    showStudentPassword
+                                                        ? 'Sembunyikan password'
+                                                        : 'Tampilkan password'
+                                                "
+                                            >
+                                                <i
+                                                    :class="
+                                                        showStudentPassword
+                                                            ? 'fa fa-eye-slash'
+                                                            : 'fa fa-eye'
+                                                    "
+                                                ></i>
+                                            </button>
                                         </div>
                                         <div
                                             v-if="passwordError"
@@ -495,6 +547,8 @@ export default {
     setup() {
         const activeTab = ref("student");
         const showOtpForm = ref(false);
+        const showAdminPassword = ref(false);
+        const showStudentPassword = ref(false);
         const emailInput = ref(null);
         const passwordInput = ref(null);
         const otpRefs = ref([]);
@@ -822,6 +876,8 @@ export default {
         return {
             activeTab,
             showOtpForm,
+            showAdminPassword,
+            showStudentPassword,
             emailInput,
             passwordInput,
             otpRefs,

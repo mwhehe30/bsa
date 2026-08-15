@@ -162,6 +162,7 @@ Route::prefix('student')->group(function () {
         Route::get('/exam/{exam_id}/{grade_id}/{page}', [App\Http\Controllers\Student\ExamController::class, 'show'])->name('student.exams.show');
         Route::put('/exam-duration/update/{grade_id}', [App\Http\Controllers\Student\ExamController::class, 'updateDuration'])->name('student.exams.update_duration');
         Route::post('/exam-answer', [App\Http\Controllers\Student\ExamController::class, 'answerQuestion'])->name('student.exams.answerQuestion');
+        Route::post('/exam-answers', [App\Http\Controllers\Student\ExamController::class, 'answerQuestions'])->name('student.exams.answerQuestions');
         Route::post('/exam-end', [App\Http\Controllers\Student\ExamController::class, 'endExam'])->name('student.exams.endExam');
         Route::get('/exam-result/{grade_id}', [App\Http\Controllers\Student\ExamController::class, 'resultExam'])->name('student.exams.resultExam');
         Route::get('/exam-result/{grade_id}/discussion', [App\Http\Controllers\Student\ExamController::class, 'downloadDiscussion'])->name('student.exams.downloadDiscussion');

@@ -310,9 +310,14 @@ class QuestionsWordImport
                         // OPSI TULIS TANGAN: "A. Jakarta", "B.6", "E.Semua ..."
                         // (boleh lanjutan setelah opsi pertama; berhenti otomatis
                         // begitu kunci jawaban/pembahasan ditemukan)
+                        //
+                        // Berlaku juga untuk soal kepribadian: opsi skala
+                        // ("A. Sangat Setuju") bisa ditulis sebagai teks biasa,
+                        // bukan hanya list item. Dibatasi hingga 5 opsi agar teks
+                        // setelah opsi kelima (mis. baris POIN) tidak ikut tertelan.
                         if (
-                            !$this->isPersonality
-                            && $current['answer'] === null
+                            $current['answer'] === null
+                            && count(array_filter($current['options'])) < 5
                             && preg_match('/^\s*[A-Ea-e][\.\)]\s*/', $text)
                         ) {
                             $prevWasQuestion = false;
@@ -1044,17 +1049,40 @@ class QuestionsWordImport
         $fmt = $this->resolveNumberingFormats($numberingXml);
         if (empty($fmt)) return false;
 
-        // Pastikan ada list desimal ("soal") sebelum mengubah struktur.
-        $hasDecimal = false;
+        // Pastikan ada indikasi dokumen ini berisi SOAL sebelum mengubah
+        // struktur. Indikatornya: list bernomor desimal (soal otomatis), ATAU
+        // paragraf biasa bernomor "1. ..." (soal diketik manual). Tanpa ini,
+        // opsi berhuruf level-0 di dokumen yang soalnya manual tidak dinaikkan
+        // sehingga malah terbaca sebagai soal baru.
+        $hasQuestionIndicator = false;
         foreach ($xpath->query('//w:p') as $p) {
             $numId = $xpath->query('./w:pPr/w:numPr/w:numId/@w:val', $p)->item(0);
-            if (!$numId) continue;
-            if (($fmt[$numId->nodeValue] ?? '') === 'decimal') {
-                $hasDecimal = true;
-                break;
+            if ($numId) {
+                if (($fmt[$numId->nodeValue] ?? '') === 'decimal') {
+                    $hasQuestionIndicator = true;
+                    break;
+                }
+                continue;
+            }
+
+            // Paragraf biasa (tanpa penomoran) — cek pola "1. teks soal..."
+            if ($xpath->query('./w:pPr/w:numPr', $p)->length > 0) {
+                continue;
+            }
+            $text = '';
+            foreach ($xpath->query('.//w:t', $p) as $t) {
+                $text .= $t->textContent;
+            }
+            $text = trim($text);
+            if (preg_match('/^\s*\d+[\.\)]\s+/', $text)) {
+                $rest = trim(preg_replace('/^\s*\d+[\.\)]\s*/', '', $text));
+                if (mb_strlen($rest) >= 8) {
+                    $hasQuestionIndicator = true;
+                    break;
+                }
             }
         }
-        if (!$hasDecimal) return false;
+        if (!$hasQuestionIndicator) return false;
 
         $changed = false;
         foreach ($xpath->query('//w:p') as $p) {
@@ -1458,7 +1486,16 @@ class QuestionsWordImport
             }
 
             $hasImages = stripos($q['question'], '<img') !== false;
-            if (!$isPersonality && !$hasContentOptions && !$hasImages) {
+            foreach ($q['options'] ?? [] as $optText) {
+                if (is_string($optText) && stripos($optText, '<img') !== false) {
+                    $hasImages = true;
+                    break;
+                }
+            }
+            // Berlaku untuk semua tipe (termasuk kepribadian): tanpa opsi, soal
+            // tidak bisa dikerjakan. Sebelumnya kepribadian dengan opsi kosong
+            // disimpan diam-diam tanpa peringatan karena validasi ini dilewati.
+            if (!$hasContentOptions && !$hasImages) {
                 $validationErrors[] = 'Semua opsi kosong dan tidak ada gambar (perlu input manual)';
             }
 

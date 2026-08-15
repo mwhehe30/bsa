@@ -133,36 +133,56 @@ class KecermatanQuestionGenerator
             // Generate referensi untuk kolom ini
             $reference = $this->generateReference($type, $column);
 
-            // Generate 50 soal untuk kolom ini
-            for ($questionNum = 1; $questionNum <= 50; $questionNum++) {
-                // Random missing position (0-4)
-                $missingPosition = rand(0, 4);
-                $missingItem = $reference[$missingPosition];
-
+            // Generate 50 soal UNIK untuk kolom ini.
+            //
+            // Sebelumnya posisi item yang hilang dan urutan 4 item sisanya dipilih
+            // acak per soal (rand + shuffle), sehingga kombinasi (posisi hilang +
+            // urutan) bisa terulang dan menghasilkan soal yang SAMA PERSIS.
+            // Sekarang semua varian yang mungkin dibangun dulu (5 posisi hilang x
+            // 24 permutasi urutan = 120 varian), lalu diambil 10 soal per posisi
+            // hilang dengan urutan yang dijamin berbeda. Hasil: 50 soal per kolom
+            // semuanya unik, dan distribusi jawaban A-E tetap merata (masing-masing
+            // tepat 10 kali per kolom).
+            $selected = [];
+            for ($missingPosition = 0; $missingPosition < 5; $missingPosition++) {
                 // Buat question sequence (4 item, tanpa yang hilang)
-                $questionSequence = [];
+                $remaining = [];
                 for ($i = 0; $i < 5; $i++) {
                     if ($i !== $missingPosition) {
-                        $questionSequence[] = $reference[$i];
+                        $remaining[] = $reference[$i];
                     }
                 }
 
-                // Acak urutan 4 item ini agar tidak persis urutan aslinya
-                shuffle($questionSequence);
+                // Semua urutan yang mungkin dari 4 item ini (24 permutasi)
+                $permutations = $this->permutations($remaining);
+                shuffle($permutations);
 
-                // Correct answer based on missing position
-                $correctAnswer = chr(65 + $missingPosition); // 0->A, 1->B, 2->C, 3->D, 4->E
+                // Ambil 10 soal dengan urutan berbeda untuk posisi hilang ini
+                foreach (array_slice($permutations, 0, 10) as $questionSequence) {
+                    $selected[] = [
+                        'missing_position' => $missingPosition,
+                        'question_sequence' => $questionSequence,
+                    ];
+                }
+            }
+
+            // Acak urutan 50 soal dalam kolom agar tidak mengelompok per posisi
+            shuffle($selected);
+
+            foreach ($selected as $questionNum => $variant) {
+                $missingPosition = $variant['missing_position'];
+                $missingItem = $reference[$missingPosition];
 
                 $questions[] = [
                     'kecermatan_exam_id' => $examId,
                     'exam_type' => $type,
                     'column_number' => $column,
-                    'question_number' => $questionNum,
+                    'question_number' => $questionNum + 1,
                     'reference_sequence' => json_encode($reference),
-                    'question_sequence' => json_encode($questionSequence),
+                    'question_sequence' => json_encode($variant['question_sequence']),
                     'missing_position' => $missingPosition,
                     'missing_item' => $missingItem,
-                    'correct_answer' => $correctAnswer,
+                    'correct_answer' => chr(65 + $missingPosition), // 0->A, 1->B, 2->C, 3->D, 4->E
                     'created_at' => now(),
                     'updated_at' => now(),
                 ];
@@ -201,6 +221,32 @@ class KecermatanQuestionGenerator
     }
 
     /**
+     * Semua permutasi urutan dari sebuah array item.
+     *
+     * Untuk 4 item menghasilkan 24 permutasi. Dipakai agar setiap soal dalam
+     * satu kolom punya urutan item yang dijamin berbeda (tidak ada soal kembar).
+     *
+     * @param array $items
+     * @return array
+     */
+    private function permutations(array $items): array
+    {
+        if (count($items) <= 1) {
+            return [$items];
+        }
+
+        $result = [];
+        foreach ($items as $key => $item) {
+            $rest = $items;
+            array_splice($rest, $key, 1);
+            foreach ($this->permutations($rest) as $perm) {
+                $result[] = array_merge([$item], $perm);
+            }
+        }
+        return $result;
+    }
+
+    /**
      * Get random items from pool (unique)
      * DEPRECATED - Tidak digunakan lagi karena referensi sudah TETAP per kolom
      *
@@ -219,6 +265,12 @@ class KecermatanQuestionGenerator
      * Shuffle dan copy soal master ke questions untuk session siswa
      * Optimized: Direct SQL with random order per column
      *
+     * Urutan kolom diacak PER SESSION agar tiap siswa mendapat urutan berbeda:
+     * kolom 1-5 diacak sendiri, kolom 6-10 diacak sendiri (duplikasi set
+     * referensi 6-10 tetap dipertahankan). Dipastikan juga dua kolom yang
+     * berurutan tidak membawa set referensi yang sama persis (kolom N dan N+5
+     * identik), supaya tidak muncul kolom "double" berdampingan.
+     *
      * @param int $sessionId
      * @param int $examId
      * @param string $type
@@ -232,16 +284,45 @@ class KecermatanQuestionGenerator
             ->where('exam_type', $type)
             ->get();
 
+        // Acak urutan kolom per session: paruh pertama (kolom 1-5) dan paruh
+        // kedua (kolom 6-10) masing-masing diacak terpisah, lalu digabung.
+        $firstHalf = range(1, 5);
+        $secondHalf = range(6, 10);
+        shuffle($firstHalf);
+        shuffle($secondHalf);
+
+        // Set referensi per kolom master (untuk deteksi kolom kembar).
+        $referenceByColumn = $masterQuestions
+            ->keyBy('column_number')
+            ->map(fn ($q) => json_encode(json_decode($q->reference_sequence, true)));
+
+        // Kolom N dan kolom N+5 memiliki set referensi yang SAMA PERSIS.
+        // Jika kolom terakhir paruh pertama dan kolom pertama paruh kedua
+        // berbagi set yang sama, geser paruh kedua sampai batas antar-paruh
+        // aman (tidak ada dua kolom berurutan dengan set identik).
+        while (
+            $referenceByColumn->get($firstHalf[4])
+            === $referenceByColumn->get($secondHalf[0])
+        ) {
+            $secondHalf[] = array_shift($secondHalf);
+        }
+
+        $columnOrder = array_merge($firstHalf, $secondHalf);
+
         $inserts = [];
         $now = now();
 
-        for ($col = 1; $col <= 10; $col++) {
-            $colQuestions = $masterQuestions->where('column_number', $col)->shuffle()->values();
+        // Salin soal per kolom sesuai urutan acak. column_number pada soal sesi
+        // dipetakan ke posisi tampilan (1-10), bukan nomor kolom master, agar
+        // frontend/result/laporan admin tetap memakai kolom 1-10 seperti biasa.
+        foreach ($columnOrder as $position => $masterColumn) {
+            $sessionColumn = $position + 1;
+            $colQuestions = $masterQuestions->where('column_number', $masterColumn)->shuffle()->values();
             foreach ($colQuestions as $idx => $q) {
                 $inserts[] = [
                     'session_id' => $sessionId,
                     'master_question_id' => $q->id,
-                    'column_number' => $col,
+                    'column_number' => $sessionColumn,
                     'question_number' => $q->question_number,
                     'shuffled_order' => $idx + 1,
                     'reference_sequence' => $q->reference_sequence,
