@@ -82,10 +82,9 @@ class KecermatanController extends Controller
         // Transaction: pembuatan exam + generate soal bersifat atomik.
         // Jika generate gagal, tidak ada record yatim tanpa soal.
         return \DB::transaction(function () use ($request) {
-            // Create exam
+            // Create exam (duration dipaksa 10 menit oleh model KecermatanExam)
             $exam = KecermatanExam::create([
                 'title' => $request->title,
-                'duration' => 600, // Fixed 10 minutes
                 'is_active' => true,
                 'created_by' => auth()->id(),
             ]);

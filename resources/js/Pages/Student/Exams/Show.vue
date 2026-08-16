@@ -833,7 +833,9 @@ export default {
                 window.Echo.channel(`student.${studentId}`).listen(
                     "StudentBlockStatusChanged",
                     (e) => {
-                        setBlockedStatus(e.is_blocked, e.violation_count);
+                        // Key payload mengikuti nama properti PHP event
+                        // (isBlocked, violationCount), bukan snake_case.
+                        setBlockedStatus(e.isBlocked, e.violationCount);
                     },
                 );
             }

@@ -44,14 +44,19 @@ class DashboardController extends Controller
                     ->latest()
                     ->first();
 
-                // Auto-complete kecermatan session if time expired (10 minutes total)
+                // Batas finalisasi = durasi ujian (tanpa grace, selaras dengan
+                // auto-submit ujian reguler). Fallback 10 menit bila durasi
+                // belum diisi (10 kolom x 60 detik).
+                $expiredSeconds = ($kecermatanExam->duration > 0 ? (int) $kecermatanExam->duration : 10) * 60;
+
+                // Auto-complete kecermatan session jika sudah melewati batas waktu
                 if ($inProgressSession && $inProgressSession->start_time) {
                     $elapsed = Carbon::now()->diffInSeconds(Carbon::parse($inProgressSession->start_time));
-                    if ($elapsed >= 600) {
+                    if ($elapsed >= $expiredSeconds) {
                         // Transaction + lock: serialkan dengan columnTimeout/forceFinish
                         // yang mungkin berjalan bersamaan agar tidak terjadi
                         // penimpaan hasil (race condition).
-                        \DB::transaction(function () use ($inProgressSession) {
+                        \DB::transaction(function () use ($inProgressSession, $expiredSeconds) {
                             $lockedSession = \App\Models\KecermatanSession::query()
                                 ->whereKey($inProgressSession->id)
                                 ->lockForUpdate()
@@ -64,7 +69,7 @@ class DashboardController extends Controller
                             }
 
                             $elapsed = Carbon::now()->diffInSeconds(Carbon::parse($lockedSession->start_time));
-                            if ($elapsed < 600) {
+                            if ($elapsed < $expiredSeconds) {
                                 return;
                             }
 

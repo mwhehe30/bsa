@@ -2,6 +2,7 @@ import { createApp, h } from 'vue';
 import { createInertiaApp, router } from '@inertiajs/vue3';
 import 'sweetalert2/dist/sweetalert2.min.css';
 import { refreshCsrfToken } from './utils/csrf';
+import './bootstrap';
 
 // ── Recovery global CSRF 419 untuk semua request Inertia (POST/PUT/PATCH/DELETE) ──
 // Inertia v2 mengirim token CSRF lewat header X-XSRF-TOKEN yang dibaca Axios

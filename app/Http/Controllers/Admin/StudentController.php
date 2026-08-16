@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Models\Student;
 use App\Models\ExamGroup;
+use App\Models\KecermatanSession;
 use Illuminate\Http\Request;
 use App\Imports\StudentsImport;
 use App\Http\Controllers\Controller;
@@ -182,19 +183,74 @@ class StudentController extends Controller
         $perPage = request()->get('per_page', 10);
         $perPage = min(max((int) $perPage, 5), 100);
 
+        // Siswa diisolir bisa diblokir di dua tempat: exam_groups (ujian reguler,
+        // dan ujian kecermatan yang tertaut) atau kecermatan_sessions (ujian
+        // kecermatan standalone yang tidak punya exam_id). Keduanya harus masuk
+        // daftar agar blokir kecermatan standalone tidak jadi "hantu" (siswa
+        // terblokir tapi tidak terlihat di halaman admin).
         $blockedStudentIds = ExamGroup::where('is_blocked', true)
             ->pluck('student_id')
+            ->merge(
+                KecermatanSession::where('is_blocked', true)
+                    ->where('status', 'in_progress')
+                    ->pluck('student_id')
+            )
             ->unique();
 
         $students = Student::whereIn('id', $blockedStudentIds)
             ->when(request()->q, function($query) {
-                $query->where('name', 'like', '%'. request()->q . '%')
+                $query->where(function ($q) {
+                    $q->where('name', 'like', '%'. request()->q . '%')
                       ->orWhere('email', 'like', '%'. request()->q . '%');
+                });
             })
             ->latest()
             ->paginate($perPage);
 
         $students->appends(['q' => request()->q, 'per_page' => $perPage]);
+
+        // Lampirkan info isolir per siswa (nama ujian + jumlah pelanggaran) agar
+        // admin tahu siswa diisolir dari ujian apa dan sudah berapa kali melanggar.
+        $studentIds = $students->pluck('id');
+
+        $blockedGroups = ExamGroup::whereIn('student_id', $studentIds)
+            ->where('is_blocked', true)
+            ->with('exam')
+            ->get()
+            ->groupBy('student_id');
+
+        // Sesi kecermatan standalone (tidak tertaut ke ujian reguler). Yang
+        // tertaut sudah tercakup lewat exam_groups di atas, jadi dilewati agar
+        // tidak dobel tampil.
+        $blockedKecermatan = KecermatanSession::whereIn('student_id', $studentIds)
+            ->where('is_blocked', true)
+            ->where('status', 'in_progress')
+            ->with('exam')
+            ->get()
+            ->reject(fn ($session) => $session->exam && $session->exam->exam_id)
+            ->groupBy('student_id');
+
+        $students->getCollection()->transform(function (Student $student) use ($blockedGroups, $blockedKecermatan) {
+            $isolationInfo = collect();
+
+            foreach (($blockedGroups[$student->id] ?? collect()) as $group) {
+                $isolationInfo->push([
+                    'exam_name' => $group->exam?->title ?? 'Ujian tidak diketahui',
+                    'violation_count' => (int) $group->violation_count,
+                ]);
+            }
+
+            foreach (($blockedKecermatan[$student->id] ?? collect()) as $session) {
+                $isolationInfo->push([
+                    'exam_name' => ($session->exam?->title ?? 'Ujian Kecermatan') . ' (Kecermatan)',
+                    'violation_count' => (int) $session->violation_count,
+                ]);
+            }
+
+            $student->isolation_info = $isolationInfo->values();
+
+            return $student;
+        });
 
         return inertia('Admin/Students/Isolated', [
             'students' => $students,

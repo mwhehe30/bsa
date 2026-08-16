@@ -26,6 +26,15 @@ if (app()->environment('local')) {
     })->name('test.exam-show');
 }
 
+// Test Center — tanpa login, untuk mengetes SEMUA fitur ujian (alur asli,
+// bukan mockup). Otomatis login sebagai siswa test (test@buweuk.test) lalu
+// daftar semua ujian dengan tombol mulai. Aktif di environment local, atau di
+// environment lain jika env TEST_CENTER_ENABLED=true di .env.
+if (app()->environment('local') || env('TEST_CENTER_ENABLED') === 'true') {
+    Route::get('/test-center', [\App\Http\Controllers\Test\TestCenterController::class, 'index'])->name('test.center');
+    Route::post('/test-center/reset', [\App\Http\Controllers\Test\TestCenterController::class, 'reset'])->name('test.center.reset');
+}
+
 // Route Login Page
 Route::get('/login', function () {
     if (auth()->check()) {

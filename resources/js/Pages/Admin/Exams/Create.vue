@@ -88,7 +88,22 @@
                             <div class="col-md-6">
                                 <div class="mb-4">
                                     <label>Durasi (Menit) <span class="text-danger">*</span></label>
-                                    <input type="number" min="1" class="form-control" placeholder="Masukkan Durasi" v-model="form.duration" />
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        class="form-control"
+                                        placeholder="Masukkan Durasi"
+                                        v-model="form.duration"
+                                        :disabled="selectedLessonIsKecermatan"
+                                    />
+                                    <div
+                                        v-if="selectedLessonIsKecermatan"
+                                        class="text-muted small mt-1"
+                                    >
+                                        <i class="fa fa-lock me-1"></i>
+                                        Ujian kecermatan selalu 10 menit (10 kolom
+                                        × 60 detik).
+                                    </div>
                                     <div v-if="errors.duration" class="alert alert-danger mt-2">{{ errors.duration }}</div>
                                 </div>
                             </div>

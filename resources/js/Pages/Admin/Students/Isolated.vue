@@ -84,6 +84,9 @@
                                         <th class="border-0">Nama</th>
                                         <th class="border-0">Email</th>
                                         <th class="border-0">Jenis Kelamin</th>
+                                        <th class="border-0">
+                                            Ujian (Pelanggaran)
+                                        </th>
                                         <th
                                             class="rounded-end border-0"
                                             style="width: 10%"
@@ -122,6 +125,34 @@
                                                     : 'Perempuan'
                                             }}
                                         </td>
+                                        <td>
+                                            <div
+                                                v-if="student.isolation_info?.length"
+                                            >
+                                                <div
+                                                    v-for="(
+                                                        info, index
+                                                    ) in student.isolation_info"
+                                                    :key="index"
+                                                    class="d-flex align-items-center justify-content-between"
+                                                >
+                                                    <span class="me-2">{{
+                                                        info.exam_name
+                                                    }}</span>
+                                                    <span
+                                                        class="badge bg-danger"
+                                                        >{{
+                                                            info.violation_count
+                                                        }}x</span
+                                                    >
+                                                </div>
+                                            </div>
+                                            <span
+                                                v-else
+                                                class="text-muted"
+                                                >-</span
+                                            >
+                                        </td>
                                         <td class="text-center">
                                             <button
                                                 @click.prevent="
@@ -137,7 +168,7 @@
                                     </tr>
                                     <tr v-if="students.data.length === 0">
                                         <td
-                                            colspan="6"
+                                            colspan="7"
                                             class="text-muted py-3 text-center"
                                         >
                                             <i

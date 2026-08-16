@@ -106,11 +106,10 @@ class ExamController extends Controller
         // tertinggal (kecermatan_exams tanpa exam, atau exam tanpa soal).
         return \DB::transaction(function () use ($request, $isKecermatan) {
             if ($isKecermatan) {
-                // Create kecermatan exam
+                // Create kecermatan exam (duration dipaksa 10 menit oleh model)
                 $kecermatanExam = \App\Models\KecermatanExam::create([
                     'exam_id' => null, // Will be set later
                     'title' => $request->title,
-                    'duration' => $request->duration * 60, // Convert to seconds
                     'is_active' => true,
                     'created_by' => auth()->id(),
                 ]);

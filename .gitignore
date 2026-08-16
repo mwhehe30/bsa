@@ -29,3 +29,15 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
+
+# Sistem / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# Log & cache lokal
+*.log
+/tests/coverage

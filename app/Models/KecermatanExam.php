@@ -27,6 +27,18 @@ class KecermatanExam extends Model
     ];
 
     /**
+     * Ujian kecermatan SELALU 10 menit (10 kolom x 60 detik), tidak lebih
+     * tidak kurang. Dipaksa di sini sehingga nilai dari form admin, salinan
+     * durasi ujian reguler, maupun pembuatan otomatis lainnya selalu 10.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (KecermatanExam $exam) {
+            $exam->duration = 10;
+        });
+    }
+
+    /**
      * Relasi ke Exam (ujian biasa)
      */
     public function exam(): BelongsTo

@@ -4,8 +4,6 @@ namespace App\Events;
 
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
-use Illuminate\Broadcasting\PresenceChannel;
-use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
@@ -15,8 +13,11 @@ class StudentBlockStatusChanged implements ShouldBroadcast
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public $studentId;
+
     public $isBlocked;
+
     public $examGroupId;
+
     public $violationCount;
 
     /**
@@ -35,7 +36,12 @@ class StudentBlockStatusChanged implements ShouldBroadcast
      */
     public function broadcastOn()
     {
-        return new PrivateChannel('student-status.' . $this->studentId);
+        // Channel publik 'student.{id}' — harus sama persis dengan deklarasi di
+        // routes/channels.php dan channel yang didengarkan frontend (Show.vue).
+        // Sebelumnya memakai 'student-status.{id}' yang tidak cocok, sehingga
+        // event tidak pernah diterima browser (realtime mati, hanya bertahan
+        // berkat fallback polling 3 detik).
+        return new Channel('student.'.$this->studentId);
     }
 
     /**

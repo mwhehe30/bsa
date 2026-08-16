@@ -54,11 +54,12 @@ class KecermatanStudentController extends Controller
         
         \Log::info('Regular exam found: ' . $regularExam->title);
         
+        // duration dipaksa 10 menit oleh model KecermatanExam, tidak disalin
+        // dari durasi ujian reguler.
         $kecermatanExam = KecermatanExam::firstOrCreate([
             'exam_id' => $exam_id
         ], [
             'title' => $regularExam->title,
-            'duration' => $regularExam->duration,
             'is_active' => true,
             'created_by' => $regularExam->lesson_id ?? 1,
         ]);
@@ -227,6 +228,16 @@ class KecermatanStudentController extends Controller
         // Jika session sudah selesai, langsung arahkan ke hasil
         if ($session->status === 'completed') {
             return redirect()->route('student.kecermatan.result', $session->id);
+        }
+
+        // Auto-submit jika total durasi ujian sudah habis (selaras dengan ujian
+        // reguler). Sesi yang ditinggalkan lalu dibuka lagi setelah waktu habis
+        // langsung difinalisasi, tidak bisa dilanjutkan.
+        if ($session->start_time && $session->exam) {
+            $durationMinutes = $session->exam->duration > 0 ? (int) $session->exam->duration : 10;
+            if (now()->timestamp - $session->start_time->timestamp >= $durationMinutes * 60) {
+                return $this->finishExam($session);
+            }
         }
 
         // Jika kolom di DB sudah lebih jauh dari parameter URL (misal karena F5/refresh), gunakan kolom dari DB
@@ -534,67 +545,8 @@ class KecermatanStudentController extends Controller
             return redirect()->route('student.kecermatan.result', $session->id);
         }
 
-        // Pastikan setiap kolom 1-10 memiliki hasil yang akurat. Kolom yang
-        // finalisasinya gagal di background (mis. koneksi putus) tetap dihitung
-        // di sini agar total hasil akhir selalu lengkap. updateOrCreate dipakai
-        // agar aman terhadap request ganda (forceFinish berjalan tanpa lock).
-        $currentColumn = (int) $session->current_column;
-        $activeColumnDuration = $session->column_start_time
-            ? min(60, max(0, now()->timestamp - $session->column_start_time->timestamp))
-            : 0;
-
-        for ($col = 1; $col <= 10; $col++) {
-            $result = $this->generator->calculateColumnResult($session->id, $col);
-
-            if ($col < $currentColumn || ($col === $currentColumn && $currentColumnCompleted)) {
-                $columnDuration = 60;
-            } elseif ($col === $currentColumn) {
-                // Ujian berhenti di kolom aktif (misalnya pelanggaran ke-3).
-                $columnDuration = $activeColumnDuration;
-            } else {
-                // Kolom setelah titik berhenti tidak pernah dikerjakan.
-                $columnDuration = 0;
-            }
-
-            KecermatanResult::updateOrCreate(
-                [
-                    'session_id' => $session->id,
-                    'column_number' => $col,
-                ],
-                [
-                    'total_questions' => 50,
-                    'correct_count' => $result['correct_count'],
-                    'wrong_count' => $result['wrong_count'],
-                    'unanswered_count' => $result['unanswered_count'],
-                    'time_spent' => $columnDuration,
-                ]
-            );
-        }
-
-        // Calculate total
-        $results = KecermatanResult::where('session_id', $session->id)
-            ->orderBy('column_number')
-            ->get();
-
-        $session->update([
-            'status' => 'completed',
-            'end_time' => now(),
-            'total_correct' => $results->sum('correct_count'),
-            'total_wrong' => $results->sum('wrong_count'),
-            'total_unanswered' => $results->sum('unanswered_count'),
-            'total_score' => $results->sum('correct_count'),
-        ]);
-
-        // Buka blokir di exam_groups setelah selesai (keluarkan dari isolir)
-        $kecermatanExam = $session->exam;
-        if ($kecermatanExam && $kecermatanExam->exam_id) {
-            $examGroup = ExamGroup::where('student_id', $session->student_id)
-                ->where('exam_id', $kecermatanExam->exam_id)
-                ->first();
-            if ($examGroup && $examGroup->is_blocked) {
-                $examGroup->update(['is_blocked' => false]);
-            }
-        }
+        app(\App\Services\KecermatanSessionFinalizer::class)
+            ->finalize($session, $currentColumnCompleted);
 
         return redirect()->route('student.kecermatan.result', $session->id);
     }
